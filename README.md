@@ -64,9 +64,22 @@ To find the run_dir: go to the train log of the experiment you want to test. You
 
 Within the main_performance_ensemble_only.py, specify the run_dir of the model for evaluation (i.e., evaluatoin metrics calculation).
 
-### Usage
+### Example
 ```bash
 python main_performance_ensemble_only.py [file name of the performance metrics that will be saved as csv per lead time]
 ```
+
+## Evaluation: `analysis/main_performance_ensemble_only.py`
+
+Within `main_performance_ensemble_only.py`, specify the `run_dir` of the model for evaluation (i.e., evaluation metrics calculation).
+
+### Usage
+
+```bash
+python analysis/main_performance_ensemble_only.py <performance_metrics_output.csv>
+```
+
+The script will load the ensemble results from the specified `run_dir`, calculate performance metrics per lead-time, and save them as a CSV file (`<performance_metrics_output.csv>`).
+
 
 
