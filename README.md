@@ -43,7 +43,7 @@ This will:
 
 ---
 
-## Evaluation: `test.sh`
+## Testing: `test.sh`
 
 ### Usage
 
@@ -52,9 +52,21 @@ This will:
 ```
 
 Arguments are the same as `train.sh`. This script runs the evaluation (`main.py evaluate`) and writes outputs to log files.
-run_dir: go to the train log of the experiment you want to test. You can find the run_dir in "Run directory is: [run_dir]".
+
+To find the run_dir: go to the train log of the experiment you want to test. You can find the run_dir in the line of "Run directory is: [run_dir]".
 
 ### Example
 
 ```bash
 ./test.sh diffusion_ssm static 0 [run_dir] myExperiment
+---
+## Evaluation: 'analysis/main_performance_ensemble_only.py'
+
+Within the main_performance_ensemble_only.py, specify the run_dir of the model for evaluation (i.e., evaluatoin metrics calculation).
+
+### Usage
+```bash
+python main_performance_ensemble_only.py [file name of the performance metrics that will be saved as csv per lead time]
+```
+
+
