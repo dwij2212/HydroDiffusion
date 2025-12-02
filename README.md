@@ -1,4 +1,4 @@
-## Diffusion ssm for probabilistic streamflow forecasting
+## HydroDiffusion: A Diffusion-Based State Space Model for Probabilistic Streamflow Forecasting
 
 ---
 
