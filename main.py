@@ -7,6 +7,7 @@ import json
 import pickle
 import random
 import sys
+import os
 from datetime import datetime
 from pathlib import Path, PosixPath
 from typing import Dict, List
@@ -18,22 +19,25 @@ from papercode.datasets import CamelsH5
 from papercode.datautils import add_camels_attributes
 from papercode.utils import create_h5_files, get_basin_list
 
-torch.multiprocessing.set_sharing_strategy('file_system')
+import torch.multiprocessing as mp
+mp.set_sharing_strategy('file_descriptor')
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Set default hyperparameters
 GLOBAL_SETTINGS = {
-    'batch_size': 64,
+    'batch_size': 256,
     'clip_norm': True,
     'clip_value': 1,
     'dropout': 0.5,
-    'epochs': 200,
+    'epochs': 60,
     'hidden_size': 256,
     'lstm_nlayers': 1, 
     'unet_nfeat': 64, 
     'initial_forget_gate_bias': 3,
     'log_interval': 50,
-    'learning_rate': 1e-4,
-    'seq_length': 365, # 365
+    'learning_rate': 3e-5,
+    'seq_length': 365,
     'forecast_horizon': 8, # nowcast(1) + forecast(7) # 8
     'train_start': pd.to_datetime('01-10-1980', format='%d-%m-%Y'),
     'train_end':   pd.to_datetime('30-09-1990', format='%d-%m-%Y'),
@@ -75,22 +79,25 @@ def get_args() -> Dict:
     parser.add_argument('--split', type=int, default=None)
     parser.add_argument('--split_file', type=str, default=None)
     parser.add_argument('--eval_dataset', type=str, choices=['val','test'], default='val', help="Which split to score (only for mode=evaluate)")
-    parser.add_argument('--epoch_num', type=int, default=200, help="Epoch number for evaluation")
-    parser.add_argument('--h5_dir', type=str, default='/home/yihan/diffusion_ssm/runs/shared_h5/', #### #### 
-    help="If set, skip create_h5_files and read HDF5s from this folder: '/home/yihan/diffusion_ssm/runs/shared_nowcast_h5/', or '/home/yihan/diffusion_ssm/runs/shared_h5/'")
+    parser.add_argument('--epoch_num', type=int, default=60, help="Epoch number for evaluation")
+    
+    parser.add_argument('--h5_dir', type=str, default= '/home/yihan/diffusion_ssm/runs/shared_h5_new/',
+    help="If set, skip create_h5_files and read HDF5s from this folder")
+    
+    parser.add_argument('--forcing_source', type=str, default="daymet")
     parser.add_argument('--num_samples', type=int, default=50, help='Number of samples to draw during diffusion sampling')
     parser.add_argument('--predict_mode', type=str, default="velocity",
                         choices=["noise", "velocity"],
                         help='Prediction mode for the diffusion model: "noise" for standard noise prediction or "velocity" for velocity prediction.')
     parser.add_argument('--time_emb_dim', type=int, default=256)
     # === DDIM-related arguments ===
-    parser.add_argument('--ddim_steps', type=int, default=10,
+    parser.add_argument('--ddim_steps', type=int, default=3,
                         help='Number of reverse steps to use for DDIM sampling')
                         
     #====================================#
     # Argument for SSM    
     # Optimizer
-    parser.add_argument('--lr', default=0.0001, type=float, help='Learning rate')
+    parser.add_argument('--lr', default=3e-5, type=float, help='Learning rate')
     parser.add_argument('--lr_min', default=0.001, type=float, help='SSM Learning rate')
     parser.add_argument('--lr_dt', default=0.0, type=float, help='dt lr')
     parser.add_argument('--min_dt', default=0.001, type=float, help='min dt')
@@ -99,8 +106,8 @@ def get_args() -> Dict:
     parser.add_argument('--weight_decay', default=0.0, type=float, help='Weight decay of the optimizer')
     
     # Scheduler
-    parser.add_argument('--epochs', default=200, type=int, help='Training epochs')
-    parser.add_argument('--warmup', default=0, type=int, help='warmup epochs')
+    parser.add_argument('--epochs', default=60, type=int, help='Training epochs')
+    parser.add_argument('--warmup', default=1, type=int, help='warmup epochs')
     
     # Dataloader
     parser.add_argument('--batch_size', default=64, type=int, help='Batch size')
@@ -118,7 +125,7 @@ def get_args() -> Dict:
     # General
     parser.add_argument('--resume', '-r', action='store_true', help='Resume from checkpoint')
     parser.add_argument('--model', type=str, default='s4d', metavar='N', help='model name')
-    parser.add_argument('--pool_type', type=str, default='avg') # 'avg', 'power', or 'attn'
+    parser.add_argument('--pool_type', type=str, default='power') # 'avg', 'power', or 'attn'
     #====================================#
 
     cfg = vars(parser.parse_args())
@@ -126,16 +133,13 @@ def get_args() -> Dict:
     if cfg["mode"] in ["evaluate"] and cfg["run_dir"] is None:
         raise ValueError("In evaluation mode, --run_dir must be specified.")
 
-    # Set device
     device = f"cuda:{cfg['gpu']}" if cfg["gpu"] >= 0 else "cpu"
     global DEVICE
     DEVICE = torch.device(device if torch.cuda.is_available() else "cpu")
     cfg["DEVICE"] = DEVICE
 
-    # Merge global defaults
     cfg.update(GLOBAL_SETTINGS)
 
-    # Convert paths
     if cfg["camels_root"] is not None:
         cfg["camels_root"] = Path(cfg["camels_root"])
     if cfg["run_dir"] is not None:
@@ -146,9 +150,7 @@ def get_args() -> Dict:
 
 def main():
     cfg = get_args()
-
     if cfg["mode"] == "train":
-        #from papercode.train import train
         from papercode.train_generic import train
         train(cfg)
 
@@ -161,4 +163,5 @@ def main():
         train(cfg)
 
 if __name__ == "__main__":
+    mp.set_start_method("spawn", force=True)
     main()
