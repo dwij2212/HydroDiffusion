@@ -374,7 +374,7 @@ def evaluate(cfg: dict):
     from multiprocessing import get_context
 
     def _worker_init_fn(_):
-        # Reopen HDF5 file in each worker (avoids ìterminate called without an active exceptionî)
+        # Reopen HDF5 file in each worker (avoids ‚Äúterminate called without an active exception‚Äù)
         wi = get_worker_info()
         if hasattr(wi, "dataset") and hasattr(wi.dataset, "_h5"):
             wi.dataset._h5 = None
@@ -515,7 +515,7 @@ def evaluate(cfg: dict):
 
     if ens_arr is not None:
         # Diffusion models: store full ensemble cube
-        npz_path = run_dir / "ensembles_epoch60_ddim2.npz" # epoch60 or epochbest
+        npz_path = run_dir / "ensembles_epoch60.npz" # epoch60 (for ssm) or epochbest (for lstm)
         SAVE(npz_path,
             basins=bas,            # (N,)
             dates=dts,             # (N,) datetime64[ns]
