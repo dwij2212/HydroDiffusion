@@ -56,24 +56,66 @@ experiment = sys.argv[1]  # the performnace csv file name
 # run_1007_1805_seed5534 ssm-ssm lr2e-4 cond0 embmlp silureadout dropout0.2 seed5534
 # run_1107_2105_seed5534 encdec lstm deterministic baseline
 # run_1107_2236_seed5534 diffusion lstm nowcast 3 prcp
-# run_1107_0814_seed5534 ssm-ssm lr2e-4 cond0 embmlp silureadout dropout0.2 seed5534 powerlaw pooling for encoder
+# run_1107_0814_seed5534 ssm-ssm lr2e-4 cond0 embmlp silureadout dropout0.2 seed5534 powerlaw pooling for encoder (refer to as ssm v2)
 # run_1007_1804_seed5534 ssm-ssm lr2e-4 cond0 embmlp linearreadout dropout0.2 seed5534
 # run_1207_2225_seed5534 diffusion lstm nowcast 15 forcings all
 # run_1207_2019_seed5534 ssm-ssm lr2e-4 cond0 embmlp silureadout dropout0.2 seed5534 powerlaw pooling for encoder daymet 
+# run_1407_0600_seed5534 ssm-ssm v2 dmodel 512 dstate 512 bs 64
+# run_1607_1724_seed5534 diffusion lstm daymet 
+# run_1507_2209_seed5534 ssm-ssm v2 daymet bs64
+# run_1507_2208_seed5534 ssm-ssm v2 daymet 540 8 bs64
+# run_1607_1758_seed5534/test_results_cfg2.pkl diffusion lstm allforcings nowcast noise cfg2
+# run_1607_1758_seed5534/test_results_cfg1.pkl diffusion lstm allforcings nowcast noise cfg2
+# run_1607_1725_seed5534 diffusion lstm daymet noise cfg0
+# run_1807_2237_seed5534 ssm-ssm v2 daymet crossattention pooling concatprcp 
+# run_1907_2236_seed5534 ssm-ssm v2 xtallconcat crossattention lion seed5534
+# run_1907_2259_seed3407 ssm-ssm v2 xtallconcat crossattention lion seed3407
+
+# run_2007_0900_seed3407 diffusion lstm xtallconcat lion seed3407
+# run_2007_1642_seed3407 diffusion lstm xtallconcat lion seed3407 daymet
+# run_2007_0830_seed3407 ssm-ssm v2 xtallconcat pp lion seed3407 daymet
+# run_2007_2105_seed3407 encdec lstm seed3407 allforcings
+# run_2107_0651_seed3407 encdec lstm seed3407 daymet
+# run_2007_2029_seed3407 ssm-ssm v2 xtallconcat pp lion seed3407 all best epoch
+# run_2007_2030_seed3407 ssm-ssm v2 xtallconcat pp lion seed3407 daymet best epoch
 
 
-input_path = "/home/yihan/diffusion_ssm/runs/run_1207_2019_seed5534/test_results.pkl" # todo test_results_epoch19, test_results
+# run_2207_1832_seed3407 diffusion lstm aligned daymet ****
+# run_2207_1829_seed3407/test_results_epoch60.pkl ssm-ssm daymet aligned
+# run_2307_1833_seed3407 diffusion lstm aligned all
+# run_2307_1732_seed3407 diffusion lstm aligned daymet 1-7fc
+# run_2307_1834_seed3407/test_results_epoch60.pkl ssm-ssm all aligned
+# run_2407_2122_seed3407 encdec_lstm aligned daymet
+# run_2307_0655_seed3407/test_results_epoch100.pkl ssm-ssm daymet aligned epoch100
+# run_2507_2120_seed3407/test_results_epoch60.pkl encoder_only_ssm daymet aligned epoch60 ****
+# run_1108_0525_seed3407/test_results_epoch60.pkl ssm-ssm all aligned unnormy epoch60
+# run_1208_0529_seed3407/test_results_epoch60.pkl encoder_only_ssm all aligned unnormy
+# run_1208_1401_seed3407/test_results_epoch60.pkl encoder_only_ssm all aligned
+# run_1409_1932_seed3407/ensembles_epochbest.npz encoder_only_lstm daymet aligned ****
+# run_2910_1858_seed3407/deterministic_epoch60.npz seq2seq_ssm daymet 
+
+input_path = "/home/yihan/diffusion_ssm/runs/run_2910_1858_seed3407/deterministic_epoch60.npz" # todo test_results_epoch19, test_results
 print(f"Loading {input_path}")
-with open(input_path, 'rb') as f:
-    ens_dict = pickle.load(f)
+#with open(input_path, 'rb') as f:
+#    ens_dict = pickle.load(f)
+ens_dict = np.load(input_path, allow_pickle=True)
 
 # === Output dirs ===
 output_dir = f"analysis/stats/"
 os.makedirs(output_dir, exist_ok=True)
 
 # Optional time series output
-timeseries_output_dir = os.path.join(output_dir, "time_series/")
+'''
+timeseries_output_dir = os.path.join(output_dir, f"{experiment}_time_series/")
 os.makedirs(timeseries_output_dir, exist_ok=True)
+
+# Save each basin's full time series
+for basin, df in ens_dict.items():
+    out_fp = os.path.join(timeseries_output_dir, f"{basin}_timeseries.csv")
+    # ensure index is meaningful, you may need df.index.name = "date"
+    df.to_csv(out_fp, index=True, index_label="date")
+    print(f"Saved time series for {basin} {out_fp}")
+'''
 
 # === Initialize ===
 leadtime_stats = {lead: [] for lead in range(1, 9)} #todo
@@ -81,6 +123,7 @@ leadtime_stats = {lead: [] for lead in range(1, 9)} #todo
 # === Main loop ===
 for basin, df in ens_dict.items():
     print(f"Processing basin {basin}...")
+    pdb.set_trace()
 
     if 'q_obs_t+1' not in df.columns:
         print(f"Skipping {basin}: no q_obs_t+1 column found.")
@@ -116,8 +159,6 @@ for basin, df in ens_dict.items():
         obsH, simH         = high_flows(df_single)
         obsL, simL         = low_flows(df_single)
         e_fhv_01            = FHV(df_single, 0.1) # percentile value, i.e., 0.1%
-        #e_fhv_5            = FHV(df_single, 5)
-        #e_fhv_10           = FHV(df_single, 10)
         e_flv              = FLV(df_single, 0.3) # not percentile value, i.e., 0.3 means 30%
         e_nse              = nse(df_single)
         e_nse_alpha        = alpha_nse(df_single)
@@ -139,8 +180,6 @@ for basin, df in ens_dict.items():
             'kge_alpha': alpha,
             'kge_beta': beta,
             'fhv_01': e_fhv_01,
-            #'fhv_5': e_fhv_5,
-            #'fhv_10': e_fhv_10,
             'flv': e_flv,
             'massbias_total': massbias_total,
             'massbias_pos': massbias_pos,
