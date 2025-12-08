@@ -116,8 +116,11 @@ def evaluate(cfg: dict):
     """
     device   = cfg["DEVICE"]
     run_dir  = Path(cfg["run_dir"])
-    #model_pt = run_dir / "best_model.pt" # todo
-    model_pt = run_dir / "model_epoch60.pt" # todo
+
+    if "lstm" in cfg["model_name"].lower():
+        model_pt = run_dir / "model_epochbest.pt"
+    else:
+        model_pt = run_dir / "model_epoch60.pt"
     cache    = run_dir / "predictions_checkpoint.npz"
 
     # --- data paths ---
@@ -515,7 +518,10 @@ def evaluate(cfg: dict):
 
     if ens_arr is not None:
         # Diffusion models: store full ensemble cube
-        npz_path = run_dir / "ensembles_epoch60.npz" # epoch60 (for ssm) or epochbest (for lstm)
+        if "lstm" in cfg["model_name"].lower():
+            npz_path = run_dir / "ensembles_epochbest.npz"
+        else:
+            npz_path = run_dir / "ensembles_epoch60.npz"
         SAVE(npz_path,
             basins=bas,            # (N,)
             dates=dts,             # (N,) datetime64[ns]
@@ -524,7 +530,11 @@ def evaluate(cfg: dict):
         print(f"[INFO] Saved FULL ENSEMBLES (N,S,H) to {npz_path}")
     else:
         # Deterministic models: store mean predictions
-        npz_path = run_dir / "deterministic_epoch30.npz"
+        if "lstm" in cfg["model_name"].lower():
+            npz_path = run_dir / "deterministic_epoch30.npz"
+        else:
+            npz_path = run_dir / "deterministic_epoch49.npz"
+        
         SAVE(npz_path,
             basins=bas,            # (N,)
             dates=dts,             # (N,)
