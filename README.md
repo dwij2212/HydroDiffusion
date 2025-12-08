@@ -143,4 +143,12 @@ analysis/ensemble_stats/
 
 Each CSV file summarizes per-basin results, and includes mean and median statistics across all basins for each lead time.
 
+## 4. HydroDiffusion Checkpoint
 
+The **HydroDiffusion** checkpoint used in the paper is included in this repository for reproducibility.
+
+You can find it in:
+
+```
+runs/hydrodiffusion_paper_checkpoint/
+```
