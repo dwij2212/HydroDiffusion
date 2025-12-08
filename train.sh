@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Usage: ./train.sh <model> <static|no_static> [gpu] [note]
-#   model : seq2seq_lstm | encdec_lstm | seq2seq_ssm | diffusion_lstm | diffusion_unet | diffusion_ssm | decoder_only_ssm | decoder_only_lstm
+#   model : seq2seq_lstm | encdec_lstm | seq2seq_ssm | decoder_only_ssm | decoder_only_lstm
 #   flag  : static | no_static
 #   gpu   : CUDA device ID (default 0)
 #   note  : optional tag (no spaces) added to logfile name
