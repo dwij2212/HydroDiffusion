@@ -785,8 +785,8 @@ def _build_model(cfg: Dict):
     elif cfg['model_name'] == 'decoder_only_ssm':
         model = decoder_only_ssm(
             d_input      = input_size_dyn, 
-            d_model      = cfg['d_model'],       # your M hidden dimension
-            n_layers     = cfg['n_layers'],      # number of S4D blocks
+            d_model      = cfg['d_model'],       
+            n_layers     = cfg['n_layers'],      
             cfg          = cfg,                  # lr, d_state, dt_min, etc.
             horizon      = cfg['forecast_horizon'],
             time_emb_dim = cfg['time_emb_dim'],
@@ -800,7 +800,7 @@ def _build_model(cfg: Dict):
         model = decoder_only_lstm(
             d_input      = input_size_dyn, 
             hidden_size  = cfg['hidden_size'],
-            cfg          = cfg,                  # lr, d_state, dt_min, etc.
+            cfg          = cfg,                
             horizon      = cfg['forecast_horizon'],
             time_emb_dim = cfg['time_emb_dim'],
             static_dim   = cfg.get('static_dim', 27),
