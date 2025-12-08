@@ -22,9 +22,10 @@ from diffusers.optimization import get_cosine_schedule_with_warmup, get_linear_s
 from torch_ema import ExponentialMovingAverage
 
 #lstm
-from papercode.lstm import Seq2SeqLSTM, EncoderDecoderDetLSTM
+from papercode.lstm import Seq2SeqLSTM, EncoderDecoderDetLSTM # deterministic
 from papercode.SSM_test import HOPE, setup_optimizer
 from papercode.backbones.lstm import GenericLSTM
+from papercode.decoder_only_lstm import decoder_only_lstm # diffusion
 
 # unet
 from papercode.backbones.unet import unet
@@ -39,9 +40,8 @@ from papercode.backbones.unet_attention_film_v3 import unet_attention_film_v3
 from papercode.backbones.ssm_v1 import ssm_v1
 from papercode.backbones.ssm_v2 import ssm_v2
 from papercode.backbones.ssm_encoder import ssm_encoder
-from papercode.decoder_only_ssm import decoder_only_ssm
-from papercode.decoder_only_lstm import decoder_only_lstm
-from papercode.seq2seq_ssm import seq2seq_ssm
+from papercode.decoder_only_ssm import decoder_only_ssm # diffusion
+from papercode.seq2seq_ssm import seq2seq_ssm # deterministic
 
 
 from papercode.diffusion_wrapper import EncoderDecoderDiffusionWrapper
