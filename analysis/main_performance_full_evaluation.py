@@ -75,7 +75,7 @@ def event_reliability(p, y, bins=np.linspace(0,1,11)):
 def main():
     if len(sys.argv) < 3:
         print("Usage: python main_performance_full_evaluation.py <experiment_name> <npz_path>")
-        # A det example: python main_performance_full_evaluation.py seq2seq_ssm /home/yihan/diffusion_ssm/runs/run_2910_1858_seed3407/deterministic_epoch60.npz
+        # A det example: python main_performance_full_evaluation.py seq2seq_ssm /home/yihan/diffusion_ssm/runs/run_2910_1858_seed3407/deterministic_epoch49.npz
 
         sys.exit(1)
 
