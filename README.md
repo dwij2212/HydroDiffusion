@@ -147,8 +147,8 @@ Each CSV file summarizes per-basin results, and includes mean and median statist
 
 The **HydroDiffusion** checkpoint used in the paper is included in this repository for reproducibility.
 
-You can find it in:
+You can find it at:
 
 ```
-runs/hydrodiffusion_paper_checkpoint/
+runs/run_2507_2120_seed3407/model_epoch60.pt
 ```
