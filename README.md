@@ -2,6 +2,19 @@
 
 ---
 
+HydroDiffusion is a diffusion model built on a **State Space Model (SSM)** backbone (S4D-FT) for **medium-range probabilistic streamflow forecasting**.  
+It combines the strengths of diffusion-based generative modeling with the temporal efficiency of SSMs to generate ensemble predictions across large-scale hydrologic basins.
+
+This repository contains:
+- Training and evaluation pipelines for HydroDiffusion and baseline models (DiffusionLSTM, LSTM, SSM).  
+- Scripts for deterministic and probabilistic performance evaluation.  
+- The **HydroDiffusion checkpoint used in the paper**, provided for reproducibility in  
+  ```
+  checkpoints/hydrodiffusion_paper_checkpoint/
+  ```
+---
+
+
 ## 1. Training: `train.sh`
 
 ### Usage
