@@ -17,7 +17,7 @@ This repository contains:
 
 ## 0. Dataset Preparation
 
-HydroDiffusion relies on the [CAMELS dataset](https://ral.ucar.edu/solutions/products/camels) (Catchment Attributes and Meteorology for Large-sample Studies) to construct training, validation, and testing datasets across 531 U.S. watersheds.  
+We use the [CAMELS dataset](https://ral.ucar.edu/solutions/products/camels) (Catchment Attributes and Meteorology for Large-sample Studies) to construct training, validation, and testing datasets across 531 U.S. watersheds.  
 Each `.h5` file contains daily meteorological forcings (precipitation, temperature, vapor pressure, shortwave radiation) and static catchment attributes.
 
 ### (i) Download the official CAMELS dataset from the NCAR/UCAR repository:
