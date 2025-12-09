@@ -15,6 +15,35 @@ This repository contains:
   ```
 ---
 
+## 0. Dataset Preparation
+
+HydroDiffusion relies on the [CAMELS dataset](https://ral.ucar.edu/solutions/products/camels) (Catchment Attributes and Meteorology for Large-sample Studies) to construct training, validation, and testing datasets across 531 U.S. watersheds.  
+Each `.h5` file contains daily meteorological forcings (precipitation, temperature, vapor pressure, shortwave radiation) and static catchment attributes.
+
+### (i) Download the official CAMELS dataset from the NCAR/UCAR repository:
+
+🔗 [https://ral.ucar.edu/solutions/products/camels](https://ral.ucar.edu/solutions/products/camels)
+
+After extraction, specify the dataset root directory in main.py.
+
+### (ii) HDF5 datasets generated from Daymet forcings
+
+For training and testing with **Daymet forcings**, if the folder `runs/shared_h5_new` does **not** exist, the code will automatically generate new `.h5` files from the raw CAMELS dataset specified by `--camels_root`.  
+
+The generated files will be automatically stored under your current run directory (e.g., `runs/run_<MMDD>_<HHMM>_seed3407/`) each time a new training job is launched.
+
+To avoid regenerating `.h5` files for every run, you can download the preprocessed Daymet dataset directly from Hugging Face:
+
+➡️ [Download `shared_h5_new` from Hugging Face](https://huggingface.co/yhwang08/HydroDiffusion/upload/main)
+
+and place the folder inside your project directory as: 
+
+```
+runs/shared_h5_new/
+```
+Note: Do not use shared_h5_new if you plan to train with forcings other than **Daymet**.
+
+---
 
 ## 1. Training: `train.sh`
 
