@@ -2,7 +2,7 @@
 
 ---
 
-**HydroDiffusion** is a **score-based diffusion model** built upon a **decoder-only State Space Model (SSM)** backbone ([S4D-FT](https://doi.org/10.1029/2025WR039888)) for **probabilistic streamflow forecasting**.  
+**HydroDiffusion** is a **score-based diffusion model** built upon a **State Space Model (SSM)** backbone ([S4D-FT](https://doi.org/10.1029/2025WR039888)) for **probabilistic streamflow forecasting**.  
 It performs joint denoising over a 7-day forecast horizon, producing temporally coherent ensemble predictions across large-scale basins.
 
 
