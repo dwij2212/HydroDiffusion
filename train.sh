@@ -63,7 +63,7 @@ for (( seed=firstseed; seed<firstseed+nseeds; seed++ )); do
     > "$logfile" 2>&1 &
     
   elif [[ "$model" == "seq2seq_ssm" ]]; then
-    python3 main.py train \
+    python3 main.py train_npy \
       --model_name="$model" \
       --seed="$seed" \
       --gpu=0 \
@@ -84,8 +84,7 @@ for (( seed=firstseed; seed<firstseed+nseeds; seed++ )); do
       --ssm_dropout=0.12 \
       --cfi=10 \
       --cfr=10 \
-      --forcing_source='daymet'\
-    > "$logfile" 2>&1 &
+      --forcing_source='daymet'
   
   elif [[ "$model" == "seq2seq_lstm" || "$model" == "encdec_lstm" ]]; then
     python3 main.py train \

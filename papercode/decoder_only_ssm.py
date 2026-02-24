@@ -144,6 +144,7 @@ class decoder_only_ssm(nn.Module):
         ts = torch.linspace(0., 1., num_steps, device=device)
 
         # initial noisy sample (we sample the entire H horizon at once)
+        # TODO: Use f and g here for nsdiff kind of sampling.
         x = torch.randn(B, H, 1, device=device)
 
         for i in range(num_steps - 1, -1, -1):

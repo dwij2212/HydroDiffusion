@@ -41,7 +41,7 @@ for (( seed=firstseed; seed<firstseed+nseeds; seed++ )); do
 
   if [[ "$model" == "decoder_only_ssm" ]]; then
     # ---------------------------- SSM branch ---------------------------------
-    python3 main.py evaluate \
+    python3 main.py evaluate_npy \
       --model_name="$model" \
       --seed="$seed" \
       --gpu=0 \
@@ -67,9 +67,9 @@ for (( seed=firstseed; seed<firstseed+nseeds; seed++ )); do
       --pool_type='power'\
       --predict_mode='velocity'\
       --forcing_source='daymet'\
-    > "$logfile" 2>&1 &
+
   elif [[ "$model" == "seq2seq_ssm" ]]; then
-    python3 main.py evaluate \
+    python3 main.py evaluate_npy \
       --model_name="$model" \
       --seed="$seed" \
       --gpu=0 \
@@ -92,9 +92,9 @@ for (( seed=firstseed; seed<firstseed+nseeds; seed++ )); do
       --cfi=10 \
       --cfr=10 \
       --forcing_source='daymet'\
-    > "$logfile" 2>&1 &
+
   elif [[ "$model" == "seq2seq_lstm" || "$model" == "encdec_lstm" ]]; then
-    python3 main.py evaluate \
+    python3 main.py evaluate_npy \
       --model_name="$model" \
       --seed="$seed" \
       --gpu=0 \
@@ -103,10 +103,10 @@ for (( seed=firstseed; seed<firstseed+nseeds; seed++ )); do
       --run_dir="$run_dir" \
       --epochs=30 \
       --forcing_source='daymet'\
-    > "$logfile" 2>&1 &   
+
   else
     # ------------------------- other models branch ---------------------------
-    python3 main.py evaluate \
+    python3 main.py evaluate_npy \
       --model_name="$model" \
       --seed="$seed" \
       --gpu=0 \
@@ -115,7 +115,7 @@ for (( seed=firstseed; seed<firstseed+nseeds; seed++ )); do
       --run_dir="$run_dir" \
       --predict_mode='velocity'\
       --forcing_source='daymet'\
-    > "$logfile" 2>&1 &
+
   fi
 
   echo "logs written to $logfile"

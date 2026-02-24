@@ -1,0 +1,5 @@
+bash train.sh seq2seq_ssm static 1 init_run
+
+bash test.sh seq2seq_ssm static 1 runs/run_2302_1130_seed3407 init_run
+
+bash test.sh diffusion_ssm static 1 runs/hd_best init_run

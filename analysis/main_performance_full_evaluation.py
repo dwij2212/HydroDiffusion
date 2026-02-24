@@ -152,17 +152,107 @@ def main():
                 "obsH": obsH, "simH": simH, "obsFDC": obsFDC, "simFDC": simFDC
             })
 
+    # Scalar metric columns — exclude array-valued FDC columns from aggregation
+    SCALAR_METRICS = [
+        "nse", "alpha_nse", "beta_nse",
+        "kge", "kge_r", "kge_alpha", "kge_beta",
+        "fhv_01", "flv",
+        "massbias_total", "massbias_pos", "massbias_neg",
+        "bias", "stdev",
+        "obs5", "sim5", "obs95", "sim95",
+        "obs0", "sim0", "obsL", "simL", "obsH", "simH",
+    ]
+
+    # Collect per-lead median rows for the final summary table
+    summary_rows = []
+
     for lead, rows in leadtime_stats.items():
         df_stats = pd.DataFrame(rows)
         if df_stats.empty:
             continue
-        mean_stats = df_stats.mean(numeric_only=True)
-        median_stats = df_stats.median(numeric_only=True)
-        mean_stats["basin"] = "mean"; median_stats["basin"] = "median"
-        df_stats = pd.concat([df_stats, mean_stats.to_frame().T, median_stats.to_frame().T], ignore_index=True)
+
+        scalar_df = df_stats[["basin", "lead_time"] + SCALAR_METRICS].copy()
+
+        mean_stats   = scalar_df[SCALAR_METRICS].mean()
+        median_stats = scalar_df[SCALAR_METRICS].median()
+        q25_stats    = scalar_df[SCALAR_METRICS].quantile(0.25)
+        q75_stats    = scalar_df[SCALAR_METRICS].quantile(0.75)
+
+        mean_stats["basin"]   = "mean";   mean_stats["lead_time"]   = lead
+        median_stats["basin"] = "median"; median_stats["lead_time"] = lead
+        q25_stats["basin"]    = "q25";    q25_stats["lead_time"]    = lead
+        q75_stats["basin"]    = "q75";    q75_stats["lead_time"]    = lead
+
+        df_stats = pd.concat(
+            [df_stats,
+             mean_stats.to_frame().T,
+             median_stats.to_frame().T,
+             q25_stats.to_frame().T,
+             q75_stats.to_frame().T],
+            ignore_index=True
+        )
         out_csv = os.path.join(out_root, f"{experiment}_det_lead{lead}.csv")
-        df_stats.to_csv(out_csv, index=False)
-        print(f"[OK] Saved deterministic stats: {out_csv}")
+
+        summary_rows.append({
+            "lead_time": lead,
+            **{m: float(median_stats[m]) for m in SCALAR_METRICS},
+            **{f"{m}_q25": float(q25_stats[m]) for m in SCALAR_METRICS},
+            **{f"{m}_q75": float(q75_stats[m]) for m in SCALAR_METRICS},
+        })
+
+    # ── Write & print the single aggregate summary ──────────────────────────
+    df_summary = pd.DataFrame(summary_rows).sort_values("lead_time")
+    summary_csv = os.path.join(out_root, f"{experiment}_summary.csv")
+
+
+    # Overall aggregate across all lead times (median of per-lead medians)
+    overall_median = df_summary[SCALAR_METRICS].median()
+    overall_q25    = df_summary[[f"{m}_q25" for m in SCALAR_METRICS]].median()
+    overall_q75    = df_summary[[f"{m}_q75" for m in SCALAR_METRICS]].median()
+
+    REPORT_METRICS = [
+        ("NSE",   "nse"),
+        ("KGE",   "kge"),
+        ("COR",   "kge_r"),
+        ("FHV%",  "fhv_01"),
+        ("FLV%",  "flv"),
+        ("Bias",  "bias"),
+    ]
+
+    col_w = 26
+    header  = f"{'Metric':<12}" + "".join(f"{'Lead '+str(r['lead_time']):<{col_w}}" for _, r in df_summary.iterrows())
+    divider = "─" * len(header)
+
+    print(f"\n{'═'*len(header)}")
+    print(f"  SUMMARY TABLE  —  {experiment}")
+    print(f"{'═'*len(header)}")
+    print(f"  Median across basins  |  IQR = [Q25, Q75]")
+    print(divider)
+    print(header)
+    print(divider)
+
+    for label, col in REPORT_METRICS:
+        row_str = f"{label:<12}"
+        for _, r in df_summary.iterrows():
+            med = r[col]
+            lo  = r[f"{col}_q25"]
+            hi  = r[f"{col}_q75"]
+            cell = f"{med:+.3f} [{lo:+.3f}, {hi:+.3f}]"
+            row_str += f"{cell:<{col_w}}"
+        print(row_str)
+
+    print(divider)
+
+    # Overall (all leads pooled)
+    print(f"\n  Overall (median across leads):")
+    print(f"  {'Metric':<10} {'Median':>8}   IQR [Q25, Q75]")
+    print(f"  {'─'*50}")
+    for label, col in REPORT_METRICS:
+        med = float(overall_median[col])
+        lo  = float(overall_q25[f"{col}_q25"])
+        hi  = float(overall_q75[f"{col}_q75"])
+        print(f"  {label:<10} {med:>+8.3f}   [{lo:+.3f}, {hi:+.3f}]")
+    print()
 
     # =====================================================
     # Skip probabilistic metrics if deterministic
@@ -212,18 +302,60 @@ def main():
                 "event_auc": auc, "event_threshold": thr, "n_samples": len(Y)
             })
 
+    PROB_METRICS = ["crps", "sharp_std", "sharp_w90", "event_auc"]
+    prob_summary_rows = []
+
     for lead in range(1, H+1):
         df_prob = pd.DataFrame(prob_rows[lead])
-        if not df_prob.empty:
-            mean_row = df_prob.mean(numeric_only=True)
-            med_row = df_prob.median(numeric_only=True)
-            mean_row["basin"], med_row["basin"] = "mean", "median"
-            mean_row["lead_time"] = med_row["lead_time"] = lead
-            df_prob = pd.concat([df_prob, mean_row.to_frame().T, med_row.to_frame().T])
-            df_prob.to_csv(os.path.join(out_root, f"{experiment}_prob_lead{lead}.csv"), index=False)
-            print(f"[OK] Saved probabilistic summary for lead {lead}")
+        if df_prob.empty:
+            continue
+        med_row  = df_prob[PROB_METRICS].median()
+        mean_row = df_prob[PROB_METRICS].mean()
+        q25_row  = df_prob[PROB_METRICS].quantile(0.25)
+        q75_row  = df_prob[PROB_METRICS].quantile(0.75)
+
+        for tag, r in [("mean", mean_row), ("median", med_row), ("q25", q25_row), ("q75", q75_row)]:
+            r = r.copy(); r["basin"] = tag; r["lead_time"] = lead
+            df_prob = pd.concat([df_prob, r.to_frame().T], ignore_index=True)
+
+        prob_summary_rows.append({
+            "lead_time": lead,
+            **{m: float(med_row[m]) for m in PROB_METRICS},
+            **{f"{m}_q25": float(q25_row[m]) for m in PROB_METRICS},
+            **{f"{m}_q75": float(q75_row[m]) for m in PROB_METRICS},
+        })
+
+    if prob_summary_rows:
+        df_prob_summary = pd.DataFrame(prob_summary_rows).sort_values("lead_time")
+        prob_summary_csv = os.path.join(out_root, f"{experiment}_prob_summary.csv")
+
+        col_w = 26
+        header_p = f"{'Metric':<12}" + "".join(
+            f"{'Lead '+str(int(r['lead_time'])):<{col_w}}" for _, r in df_prob_summary.iterrows()
+        )
+        print(f"\n{'═'*len(header_p)}")
+        print(f"  PROBABILISTIC SUMMARY  —  {experiment}")
+        print(f"{'═'*len(header_p)}")
+        print(f"  Median across basins  |  IQR = [Q25, Q75]")
+        print("─" * len(header_p))
+        print(header_p)
+        print("─" * len(header_p))
+        for label, col in [("CRPS", "crps"), ("Sharp-STD", "sharp_std"),
+                            ("Sharp-W90", "sharp_w90"), ("AUC", "event_auc")]:
+            row_str = f"{label:<12}"
+            for _, r in df_prob_summary.iterrows():
+                med = r[col]; lo = r[f"{col}_q25"]; hi = r[f"{col}_q75"]
+                cell = f"{med:.3f} [{lo:.3f}, {hi:.3f}]"
+                row_str += f"{cell:<{col_w}}"
+            print(row_str)
+        print()
 
     print("All deterministic + probabilistic evaluation results saved.")
+
+    # stats of preds and obs for debugging
+    print(f"Overall stats - preds: mean {ens.mean():.4f}, std {ens.std():.4f} | obs: mean {obs.mean():.4f}, std {obs.std():.4f}")
+    print(f"Overall stats - preds: min {ens.min():.4f}, max {ens.max():.4f} | obs: min {obs.min():.4f}, max {obs.max():.4f}")
+    
 
 if __name__ == "__main__":
     main()

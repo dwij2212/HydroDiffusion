@@ -17,6 +17,7 @@ import pdb
 import sys
 
 from papercode.datasets import CamelsH5
+from papercode.datasets_npy import CamelsNPY
 from papercode.nseloss import NSELoss
 from diffusers.optimization import get_cosine_schedule_with_warmup, get_linear_schedule_with_warmup
 from torch_ema import ExponentialMovingAverage

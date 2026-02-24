@@ -15,9 +15,9 @@ from typing import Dict, List
 import numpy as np
 import pandas as pd
 import torch
-from papercode.datasets import CamelsH5
-from papercode.datautils import add_camels_attributes
-from papercode.utils import create_h5_files, get_basin_list
+# from papercode.datasets import CamelsH5
+# from papercode.datautils import add_camels_attributes
+# from papercode.utils import create_h5_files, get_basin_list
 
 import torch.multiprocessing as mp
 mp.set_sharing_strategy('file_descriptor')
@@ -26,17 +26,17 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Set default hyperparameters
 GLOBAL_SETTINGS = {
-    'batch_size': 256,
+    'batch_size': 4096,
     'clip_norm': True,
     'clip_value': 1,
-    'dropout': 0.5,
+    'dropout': 0.3,
     'epochs': 60,
     'hidden_size': 256,
     'lstm_nlayers': 1, 
     'unet_nfeat': 64, 
     'initial_forget_gate_bias': 3,
     'log_interval': 50,
-    'learning_rate': 3e-5,
+    'learning_rate': 5e-3,
     'seq_length': 365,
     'forecast_horizon': 8, # nowcast(1) + forecast(7) # 8
     'train_start': pd.to_datetime('01-10-1980', format='%d-%m-%Y'),
@@ -62,7 +62,7 @@ def str2bool(v):
 def get_args() -> Dict:
     """Parse CLI arguments into a configuration dictionary."""
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=["train", "evaluate"])
+    parser.add_argument('mode', choices=["train_npy", "train", "evaluate", "evaluate_npy"])
     parser.add_argument('--camels_root', type=str, default='/data/rdl/yihan/data/basin_dataset_public_v1p2/')
     parser.add_argument('--seed', type=int, default=5534)
     parser.add_argument('--run_dir', type=str)
@@ -154,8 +154,16 @@ def main():
         from papercode.train_generic import train
         train(cfg)
 
+    elif cfg["mode"] == "train_npy":
+        from papercode.train_npy import train
+        train(cfg)
+
     elif cfg["mode"] == "evaluate":
         from papercode.evaluate_generic import evaluate
+        evaluate(cfg)
+
+    elif cfg["mode"] == "evaluate_npy":
+        from papercode.evaluate_npy import evaluate
         evaluate(cfg)
 
     elif cfg["mode"] == "train_debug":
