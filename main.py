@@ -26,7 +26,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Set default hyperparameters
 GLOBAL_SETTINGS = {
-    'batch_size': 4096,
+    'batch_size': 512,
     'clip_norm': True,
     'clip_value': 1,
     'dropout': 0.3,

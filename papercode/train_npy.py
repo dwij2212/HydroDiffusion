@@ -275,27 +275,24 @@ def train(cfg):
                   "ema":   ema.state_dict(),
                   "epoch": epoch
               }
+
+            if cfg['model_name'] in ['diffusion_lstm', 'diffusion_unet', 'diffusion_ssm', 'decoder_only_ssm', 'decoder_only_lstm', 'diffusion_ssm_unet', 'diffusion_ssm_lstm']:
+                val_loss = validate_diffusion_epoch(cfg, model, val_loader, epoch, ema)
+            else:
+                val_loss = validate_epoch(cfg, model, val_loader, loss_fn, epoch, ema)
+            val_losses.append(val_loss)
+            loss_log["val_loss"].append(val_loss)
             
-            torch.save(state, cfg['run_dir'] / f"model_epoch{epoch}.pt")
-    
-            if epoch % 1 == 0 or epoch == cfg['epochs']:    
-                if cfg['model_name'] in ['diffusion_lstm', 'diffusion_unet', 'diffusion_ssm', 'decoder_only_ssm', 'decoder_only_lstm', 'diffusion_ssm_unet', 'diffusion_ssm_lstm']:
-                    val_loss = validate_diffusion_epoch(cfg, model, val_loader, epoch, ema)
-                else:
-                    val_loss = validate_epoch(cfg, model, val_loader, loss_fn, epoch, ema)
-                val_losses.append(val_loss)
-                loss_log["val_loss"].append(val_loss)
-                
-                tqdm.write(f"Current learning rate: {optimizer.param_groups[0]['lr']:.6g}")
-    
-                if val_loss < best_val:
-                    best_val = val_loss
-                    patience_ctr = 0
-                    torch.save(state, cfg['run_dir'] / "best_model.pt")
-                    tqdm.write("New best model saved.")
-                else:
-                    patience_ctr += 1
-                    tqdm.write(f"No improvement. Patience: {patience_ctr}/10")
+            tqdm.write(f"Current learning rate: {optimizer.param_groups[0]['lr']:.6g}")
+
+            if val_loss < best_val:
+                best_val = val_loss
+                patience_ctr = 0
+                torch.save(state, cfg['run_dir'] / "best_model.pt")
+                tqdm.write("New best model saved.")
+            else:
+                patience_ctr += 1
+                tqdm.write(f"No improvement. Patience: {patience_ctr}/10")
     
             # Dynamically write log after each epoch
             with open(loss_log_path, "w") as f:

@@ -6,10 +6,19 @@
 #   gpu   : CUDA device ID (default 0)
 #   note  : optional tag (no spaces) added to logfile name
 
+# usage bash train.sh decoder_only_ssm static cuda:1 test1
+# bash train.sh seq2seq_lstm static cuda:1 test2
+# bash train.sh seq2seq_ssm static cuda:1 test3
+# bash train.sh encdec_lstm static cuda:1 test4
+# bash train.sh decoder_only_lstm static cuda:1 test5
+
 model=$1
 static_flag=$2
-gpu_id=${3:-0}
+gpu_arg=${3:-0}
 note=${4:-}
+
+# Strip optional "cuda:" prefix so CUDA_VISIBLE_DEVICES gets a plain integer (e.g. "cuda:1" -> "1")
+gpu_id="${gpu_arg#cuda:}"
 
 export CUDA_VISIBLE_DEVICES="$gpu_id"
 
@@ -32,12 +41,12 @@ mkdir -p reports
 
 # ============================= main loop =====================================
 for (( seed=firstseed; seed<firstseed+nseeds; seed++ )); do
-  echo "=== seed=$seed | model=$model | no_static=$no_static | concat_static=$concat_static | HOST_GPU=$gpu_id ? cuda:0 | note='$note' ==="
+  echo "=== seed=$seed | model=$model | no_static=$no_static | concat_static=$concat_static | HOST_GPU=$gpu_arg -> CUDA_VISIBLE_DEVICES=$gpu_id (cuda:0) | note='$note' ==="
 
   logfile="reports/global_${model}_${static_flag}_${seed}${note:+_${note}}.out"
 
   if [[ "$model" == "decoder_only_ssm" ]]; then
-    python3 main.py train \
+    python3 main.py train_npy \
       --model_name="$model" \
       --seed="$seed" \
       --gpu=0 \
@@ -59,8 +68,7 @@ for (( seed=firstseed; seed<firstseed+nseeds; seed++ )); do
       --cfi=10 \
       --cfr=10 \
       --pool_type='power'\
-      --forcing_source='daymet'\
-    > "$logfile" 2>&1 &
+      --forcing_source='daymet'
     
   elif [[ "$model" == "seq2seq_ssm" ]]; then
     python3 main.py train_npy \
@@ -87,18 +95,17 @@ for (( seed=firstseed; seed<firstseed+nseeds; seed++ )); do
       --forcing_source='daymet'
   
   elif [[ "$model" == "seq2seq_lstm" || "$model" == "encdec_lstm" ]]; then
-    python3 main.py train \
+    python3 main.py train_npy \
       --model_name="$model" \
       --seed="$seed" \
       --gpu=0 \
       --no_static="$no_static" \
       --concat_static="$concat_static" \
       --epochs=30 \
-      --forcing_source='daymet'\
-    > "$logfile" 2>&1 &
+      --forcing_source='daymet'
   else
     # ------------------------- other models branch ---------------------------
-    python3 main.py train \
+    python3 main.py train_npy \
       --model_name="$model" \
       --seed="$seed" \
       --gpu=0 \
@@ -107,8 +114,7 @@ for (( seed=firstseed; seed<firstseed+nseeds; seed++ )); do
       --no_static="$no_static" \
       --concat_static="$concat_static" \
       --predict_mode='velocity'\
-      --forcing_source='daymet'\
-    > "$logfile" 2>&1 &
+      --forcing_source='daymet'
   fi
 
   echo "logs written to $logfile"
