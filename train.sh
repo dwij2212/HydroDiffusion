@@ -22,7 +22,7 @@ gpu_id="${gpu_arg#cuda:}"
 
 export CUDA_VISIBLE_DEVICES="$gpu_id"
 
-nseeds=1
+nseeds=5
 firstseed=3407
 
 # -------------------------------- static flags -------------------------------

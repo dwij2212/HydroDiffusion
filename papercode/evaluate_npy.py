@@ -109,13 +109,10 @@ def evaluate(cfg: dict):
     device   = cfg["DEVICE"]
     run_dir  = Path(cfg["run_dir"])
 
-    if "lstm" in cfg["model_name"].lower():
-        model_pt = run_dir / "model_epochbest.pt"
-    else:
-        model_pt = run_dir / "model_epoch60.pt"
-    cache    = run_dir / "predictions_checkpoint.npz"
+    model_pt = run_dir / "best_model.pt"
+    cache    = run_dir / "predictions.npz"
 
-    # fast-return
+    # fast-return if already evaluated
     if cache.exists():
         return np.load(cache, allow_pickle=True)
 
@@ -128,6 +125,7 @@ def evaluate(cfg: dict):
     )
 
     scalar = compute_normalization(data, dates)
+    print(f"Computed normalization scalar: {scalar}")
     q_means, q_stds = compute_per_basin_q_stats(data, dates)
 
     # --- build model ---
@@ -336,7 +334,7 @@ def evaluate(cfg: dict):
         scalar=scalar, q_means=q_means, q_stds=q_stds,
         split_start=cfg['test_start'], split_end=cfg['test_end'],
         seq_length=cfg.get('seq_length', 365), forecast_horizon=cfg['forecast_horizon'],
-        stride=90,
+        stride=1,
         concat_static=cfg['concat_static'], no_static=cfg['no_static'],
         include_dates=True, is_train=False,
     )
@@ -353,8 +351,6 @@ def evaluate(cfg: dict):
         # b_ids is typically a tuple/list of strings directly from the dataloader
         m = torch.tensor([q_means[basin_to_idx[b]] for b in b_ids], device=device, dtype=torch.float32)
         s = torch.tensor([q_stds[basin_to_idx[b]]  for b in b_ids], device=device, dtype=torch.float32)
-
-        print(f"_denorm: arr shape {arr.shape}, m shape {m.shape}, s shape {s.shape}")
 
         return arr * s + m
         
@@ -436,10 +432,9 @@ def evaluate(cfg: dict):
                     all_ens.append(None)
     
                 all_preds.append(preds.cpu().numpy())
-                all_tgts .append(y_t.cpu().numpy())
-
-                # print preds and targets stats for debugging
-                print(f"Batch stats - preds: mean {preds.mean().item():.4f}, std {preds.std().item():.4f} | tgts: mean {y_t.mean().item():.4f}, std {y_t.std().item():.4f}")
+                # y_t is z-score normalized per basin — denormalize to real space
+                y_t_denorm = denorm(y_t)
+                all_tgts .append(y_t_denorm.cpu().numpy())
 
                 all_basin_ids.extend(basin_batch)
                 all_dates.extend(pd.to_datetime(date_batch))
@@ -452,28 +447,19 @@ def evaluate(cfg: dict):
     dts       = np.array(all_dates, dtype="datetime64[ns]")  # avoid object dtype
     ens_arr   = None if all_ens[0] is None else np.vstack(all_ens)  # (N,S,H) for diffusion
 
-    SAVE = np.savez
+    npz_path = run_dir / "predictions.npz"
 
     if ens_arr is not None:
-        if "lstm" in cfg["model_name"].lower():
-            npz_path = run_dir / "ensembles_epochbest.npz"
-        else:
-            npz_path = run_dir / "ensembles_epoch60.npz"
-        SAVE(npz_path,
-            basins=bas,            # (N,)
-            dates=dts,             # (N,) datetime64[ns]
-            obs=tgts_arr,          # (N,H_obs)
-            ens=ens_arr)           # (N,S,H)
-        print(f"[INFO] Saved FULL ENSEMBLES (N,S,H) to {npz_path}")
+        np.savez(npz_path,
+            basins=bas,       # (N,)
+            dates=dts,        # (N,) datetime64[ns]
+            obs=tgts_arr,     # (N,H)
+            ens=ens_arr)      # (N,S,H)
+        print(f"[INFO] Saved ensemble predictions (N,S,H) to {npz_path}")
     else:
-        if "lstm" in cfg["model_name"].lower():
-            npz_path = run_dir / "deterministic_epoch30.npz"
-        else:
-            npz_path = run_dir / "deterministic_epoch49.npz"
-        
-        SAVE(npz_path,
-            basins=bas,            # (N,)
-            dates=dts,             # (N,)
-            obs=tgts_arr,          # (N,H_obs)
-            preds=preds_arr)       # (N,H)
+        np.savez(npz_path,
+            basins=bas,       # (N,)
+            dates=dts,        # (N,)
+            obs=tgts_arr,     # (N,H)
+            preds=preds_arr)  # (N,H)
         print(f"[INFO] Saved deterministic predictions (N,H) to {npz_path}")

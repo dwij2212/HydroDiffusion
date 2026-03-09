@@ -68,7 +68,7 @@ def get_args() -> Dict:
     parser.add_argument('--run_dir', type=str)
     parser.add_argument('--gpu', type=int, default=-1)
     parser.add_argument('--cache_data', type=str2bool, default=True)
-    parser.add_argument('--num_workers', type=int, default=12)
+    parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--no_static', type=str2bool, default=False)
     parser.add_argument('--concat_static', type=str2bool, default=True)
     parser.add_argument('--static_dim', type=int, default=27)

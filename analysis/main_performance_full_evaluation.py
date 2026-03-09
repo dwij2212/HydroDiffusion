@@ -81,7 +81,7 @@ def main():
 
     experiment = sys.argv[1]
     npz_path   = sys.argv[2]
-    out_root = "analysis/ensemble_stats"
+    out_root = "analysis/ensemble_stats/" + experiment
     os.makedirs(out_root, exist_ok=True)
 
     # ---- load npz ----

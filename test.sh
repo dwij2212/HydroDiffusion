@@ -7,11 +7,19 @@
 #   run_dir: the running directory
 #   note  : optional tag (no spaces) added to logfile name
 
+# usage:
+# bash test.sh decoder_only_ssm static 2 ./runs/run_0803_1500_seed3407 test1
+# bash test.sh seq2seq_lstm static 2 ./runs/run_0803_1457_seed3407 test2
+# bash test.sh seq2seq_ssm static 1 test3
+# bash test.sh encdec_lstm static 1 test4
+# bash test.sh decoder_only_lstm static 1 test5
+
 model=$1
 static_flag=$2
 gpu_id=${3:-0}
 run_dir=$4
 note=${5:-}
+
 
 export CUDA_VISIBLE_DEVICES="$gpu_id"
 export PYTHONPATH=$(pwd):$PYTHONPATH

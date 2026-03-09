@@ -168,7 +168,7 @@ def train(cfg):
         scalar=scalar, q_means=q_means, q_stds=q_stds,
         split_start=train_start, split_end=train_end,
         seq_length=365, forecast_horizon=8,
-        stride=90,
+        stride=1,
         concat_static=True, no_static=False,
         include_dates=False, is_train=True,
     )
@@ -180,7 +180,7 @@ def train(cfg):
         data=data, dates=dates, basins=basins,
         scalar=scalar, q_means=q_means, q_stds=q_stds,
         split_start=val_start, split_end=val_end,
-        stride=90,
+        stride=1,
         seq_length=365, forecast_horizon=8,
         concat_static=True, no_static=False,
         include_dates=False, is_train=True,
@@ -283,7 +283,8 @@ def train(cfg):
             val_losses.append(val_loss)
             loss_log["val_loss"].append(val_loss)
             
-            tqdm.write(f"Current learning rate: {optimizer.param_groups[0]['lr']:.6g}")
+            active_opt = optimizer_lstm if cfg['model_name'] in ['seq2seq_lstm', 'encdec_lstm'] else optimizer
+            tqdm.write(f"Current learning rate: {active_opt.param_groups[0]['lr']:.6g}")
 
             if val_loss < best_val:
                 best_val = val_loss
@@ -494,12 +495,14 @@ def train_epoch(cfg, model, optimizer, scheduler, loss_fn, loader, epoch, ema):
 
     for batch in pbar:
         # -------- flexible unpack ---------------------------------------
+        # batch order: x, [attrs], y, q_means, q_stds, basin, date
         if cfg['no_static']:
             x, y, *rest = batch
             static_attrs = None
         else:
             x, static_attrs, y, *rest = batch
-        q_stds = rest[0] if (rest and torch.is_tensor(rest[0])) else None
+        # rest[0]=q_means, rest[1]=q_stds
+        q_stds = rest[1] if (len(rest) > 1 and torch.is_tensor(rest[1])) else None
 
         # -------- move tensors to device --------------------------------
         to_dev = lambda t: t.to(cfg['DEVICE']) if torch.is_tensor(t) else t
@@ -547,16 +550,14 @@ def train_epoch(cfg, model, optimizer, scheduler, loss_fn, loader, epoch, ema):
         if preds.dim() == 3:                         # (B,S,1)
             S = preds.size(1)
             y_trg = y[:, -S:].unsqueeze(-1)          # (B,S,1)
-            q_trg = (q_stds[:, -S:].unsqueeze(-1)
-                     if q_stds is not None else None)
         else:                                        # (B,1)
             y_trg = y[:, -1].unsqueeze(-1)
-            q_trg = (q_stds[:, -1].unsqueeze(-1)
-                     if q_stds is not None else None)
 
         # -------- loss_fn / back-prop --------------------------------------
+        # Targets are z-scored (std≈1 per basin) so NSELoss weights should
+        # all equal 1. Pass ones so NSELoss reduces to MSE in z-score space.
         loss = (loss_fn(preds, y_trg) if cfg['use_mse']
-                else loss_fn(preds, y_trg, q_trg))
+                else loss_fn(preds, y_trg, torch.ones_like(y_trg)))
         loss.backward()
         if cfg['clip_norm']:
             torch.nn.utils.clip_grad_norm_(model.parameters(), cfg['clip_value'])
@@ -591,13 +592,15 @@ def validate_epoch(cfg, model, loader, loss_fn, epoch, ema):
     with ema.average_parameters():
         for batch in pbar:
             # -------- flexible unpack ---------------------------------------
+            # batch order: x, [attrs], y, q_means, q_stds, basin, date
             if cfg['no_static']:
                 x, y, *rest = batch
                 static_attrs = None
             else:
                 x, static_attrs, y, *rest = batch
-            q_stds = rest[0] if (rest and torch.is_tensor(rest[0])) else None
-    
+            # rest[0]=q_means, rest[1]=q_stds
+            q_stds = rest[1] if (len(rest) > 1 and torch.is_tensor(rest[1])) else None
+
             to_dev = lambda t: t.to(cfg['DEVICE']) if torch.is_tensor(t) else t
             x, y = map(to_dev, (x, y))
             if static_attrs is not None: static_attrs = to_dev(static_attrs)
@@ -637,15 +640,12 @@ def validate_epoch(cfg, model, loader, loss_fn, epoch, ema):
             if preds.dim() == 3:                        # (B,S,1)
                 S = preds.size(1)
                 y_trg = y[:, -S:].unsqueeze(-1)
-                q_trg = (q_stds[:, -S:].unsqueeze(-1)
-                         if q_stds is not None else None)
             else:                                       # (B,1)
                 y_trg = y[:, -1].unsqueeze(-1)
-                q_trg = (q_stds[:, -1].unsqueeze(-1)
-                         if q_stds is not None else None)
-    
+
+            # Targets are z-scored so pass unit weights to NSELoss
             loss = (loss_fn(preds, y_trg) if cfg['use_mse']
-                    else loss_fn(preds, y_trg, q_trg))
+                    else loss_fn(preds, y_trg, torch.ones_like(y_trg)))
             B = y.size(0)
             total_loss += loss.item() * B
             total_n += B

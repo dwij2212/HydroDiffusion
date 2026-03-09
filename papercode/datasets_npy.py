@@ -191,8 +191,9 @@ def _build_windows(
         y_end   = y_start + forecast_horizon
         target = sf[y_start:y_end]          # (fh,)
 
-        # skip if any target is NaN or negative
-        if np.isnan(target).any() or (target < 0).any():
+        # skip if any target is NaN (streamflow is now z-score normalized,
+        # so negative values are valid — only NaN means missing data)
+        if np.isnan(target).any():
             continue
 
         # input: (seq_length + fh) consecutive days of forcing
@@ -308,9 +309,11 @@ class CamelsNPY(Dataset):
         ).astype(np.float32)
 
         sf_split = data[:, split_idx, 32].copy()                    # (B, T_split)
-        # sf_split = (
-        #     (sf_split - scalar["output_mean"]) / scalar["output_std"]
-        # ).astype(np.float32)
+        # Normalize streamflow per-basin using training q_mean/q_std.
+        # evaluate_npy._denorm inverts this as: pred * q_std + q_mean
+        sf_split = (
+            (sf_split - q_means[:, 0:1]) / q_stds[:, 0:1]
+        ).astype(np.float32)
 
         # ---- tile forcing from 5 → 15 (3 copies) so existing idx_map works ----
         # order: [prcp_nldas, prcp_maurer, prcp_daymet, srad_nldas, ...]
