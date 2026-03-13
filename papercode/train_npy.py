@@ -294,6 +294,10 @@ def train(cfg):
             else:
                 patience_ctr += 1
                 tqdm.write(f"No improvement. Patience: {patience_ctr}/10")
+
+                if patience_ctr >= 15:
+                    tqdm.write("Early stopping triggered.")
+                    break
     
             # Dynamically write log after each epoch
             with open(loss_log_path, "w") as f:
@@ -325,9 +329,9 @@ def train_diffusion_epoch(cfg, model, optimizer, scheduler, loader, epoch, ema):
 
         x_d, y_norm = x_d.to(cfg['DEVICE']), y_norm.to(cfg['DEVICE'])
         
-        nldas_idx  = [0,  3,  6,  9, 12]
-        maurer_idx = [1,  4,  7, 10, 13]
-        daymet_idx = [2,  5,  8, 11, 14]
+        nldas_idx  = [0,  3,  6,  9, 12, 15]
+        maurer_idx = [1,  4,  7, 10, 13, 15]
+        daymet_idx = [2,  5,  8, 11, 14, 15]
         idx_map = {
             'nldas':  nldas_idx,
             'maurer': maurer_idx,
@@ -411,9 +415,9 @@ def validate_diffusion_epoch(cfg, model, loader, epoch, ema):
             x_d = x_d.to(cfg['DEVICE'])
             y_norm = y_norm.to(cfg['DEVICE'])
             
-            nldas_idx  = [0,  3,  6,  9, 12]
-            maurer_idx = [1,  4,  7, 10, 13]
-            daymet_idx = [2,  5,  8, 11, 14]
+            nldas_idx  = [0,  3,  6,  9, 12, 15]
+            maurer_idx = [1,  4,  7, 10, 13, 15]
+            daymet_idx = [2,  5,  8, 11, 14, 15]
             idx_map = {
                 'nldas':  nldas_idx,
                 'maurer': maurer_idx,
@@ -511,9 +515,9 @@ def train_epoch(cfg, model, optimizer, scheduler, loss_fn, loader, epoch, ema):
         if q_stds is not None: q_stds = to_dev(q_stds)
         
         
-        nldas_idx  = [0,  3,  6,  9, 12]
-        maurer_idx = [1,  4,  7, 10, 13]
-        daymet_idx = [2,  5,  8, 11, 14]
+        nldas_idx  = [0,  3,  6,  9, 12, 15]
+        maurer_idx = [1,  4,  7, 10, 13, 15]
+        daymet_idx = [2,  5,  8, 11, 14, 15]
         idx_map = {
             'nldas':  nldas_idx,
             'maurer': maurer_idx,
@@ -608,9 +612,9 @@ def validate_epoch(cfg, model, loader, loss_fn, epoch, ema):
             if (not cfg['use_mse']) and (q_stds is None):
                 q_stds = torch.ones_like(y, device=cfg['DEVICE'])
             
-            nldas_idx  = [0,  3,  6,  9, 12]
-            maurer_idx = [1,  4,  7, 10, 13]
-            daymet_idx = [2,  5,  8, 11, 14]
+            nldas_idx  = [0,  3,  6,  9, 12, 15]
+            maurer_idx = [1,  4,  7, 10, 13, 15]
+            daymet_idx = [2,  5,  8, 11, 14, 15]
             idx_map = {
                 'nldas':  nldas_idx,
                 'maurer': maurer_idx,
@@ -657,11 +661,11 @@ def validate_epoch(cfg, model, loader, loss_fn, epoch, ema):
 
 def _build_model(cfg: Dict):
     if cfg['forcing_source'] == 'all':
-        dyn_in = 15 
-        input_size_dyn = dyn_in if (cfg['no_static'] or not cfg['concat_static']) else 42
+        dyn_in = 16 
+        input_size_dyn = dyn_in if (cfg['no_static'] or not cfg['concat_static']) else 43
     else:
-        dyn_in = 5
-        input_size_dyn = dyn_in if (cfg['no_static'] or not cfg['concat_static']) else 32
+        dyn_in = 6
+        input_size_dyn = dyn_in if (cfg['no_static'] or not cfg['concat_static']) else 33
     static_size = 0 if cfg['no_static'] else (input_size_dyn - dyn_in)
 
     if cfg['model_name'] == 'seq2seq_lstm':   

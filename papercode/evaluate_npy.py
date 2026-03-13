@@ -40,11 +40,11 @@ RAW_DIR = '/projects/standard/kumarv/renga/Public/DATA/camels_us_531/RAW'
 # --------------------------------------------------------------------
 def _build_det_model(cfg, device):
     if cfg['forcing_source'] == 'all':
-        dyn_in = 15 # depend on whether it's multisources. If single source, set it to 5. 
-        in_size_dyn = dyn_in if (cfg['no_static'] or not cfg['concat_static']) else 42 # 42 for 3-source input, i.e., dyn_in=15
+        dyn_in = 16 # depend on whether it's multisources. If single source, set it to 5+1. 
+        in_size_dyn = dyn_in if (cfg['no_static'] or not cfg['concat_static']) else 43 # 43 for 3-source input, i.e., dyn_in=16
     else:
-        dyn_in = 5 # depend on whether it's multisources. If single source, set it to 5. 
-        in_size_dyn = dyn_in if (cfg['no_static'] or not cfg['concat_static']) else 32
+        dyn_in = 6 # depend on whether it's multisources. If single source, set it to 5+1. 
+        in_size_dyn = dyn_in if (cfg['no_static'] or not cfg['concat_static']) else 33
     
     static_size  = 0 if cfg["no_static"] else (in_size_dyn - dyn_in)
     H = cfg["forecast_horizon"]
@@ -132,11 +132,11 @@ def evaluate(cfg: dict):
     is_diffusion = (cfg["model_name"] in ["diffusion_lstm", "diffusion_unet", "diffusion_ssm", "decoder_only_ssm", "decoder_only_lstm", "diffusion_ssm_unet", "diffusion_ssm_lstm"])
     if is_diffusion:
         if cfg['forcing_source'] == 'all':
-            dyn_in = 15 # depend on whether it's multisources. If single source, set it to 5. 
-            in_size_dyn = dyn_in if (cfg['no_static'] or not cfg['concat_static']) else 42 # 42 for 3-source input, i.e., dyn_in=15
+            dyn_in = 16 # depend on whether it's multisources. If single source, set it to 5+1. 
+            in_size_dyn = dyn_in if (cfg['no_static'] or not cfg['concat_static']) else 43 # 43 for 3-source input, i.e., dyn_in=16
         else:
-            dyn_in = 5 # depend on whether it's multisources. If single source, set it to 5. 
-            in_size_dyn = dyn_in if (cfg['no_static'] or not cfg['concat_static']) else 32
+            dyn_in = 6 # depend on whether it's multisources. If single source, set it to 5+1. 
+            in_size_dyn = dyn_in if (cfg['no_static'] or not cfg['concat_static']) else 33
            
         static_size = 0 if cfg["no_static"] else (in_size_dyn - dyn_in)
       
@@ -349,8 +349,8 @@ def evaluate(cfg: dict):
 
     def _denorm(arr, b_ids):
         # b_ids is typically a tuple/list of strings directly from the dataloader
-        m = torch.tensor([q_means[basin_to_idx[b]] for b in b_ids], device=device, dtype=torch.float32)
-        s = torch.tensor([q_stds[basin_to_idx[b]]  for b in b_ids], device=device, dtype=torch.float32)
+        m = torch.tensor(scalar["output_mean"], device=device, dtype=arr.dtype)
+        s = torch.tensor(scalar["output_std"], device=device, dtype=arr.dtype)
 
         return arr * s + m
         
@@ -372,9 +372,9 @@ def evaluate(cfg: dict):
     
                 def denorm(a): return _denorm(a, basin_batch)
          
-                nldas_idx  = [0,  3,  6,  9, 12]
-                maurer_idx = [1,  4,  7, 10, 13]
-                daymet_idx = [2,  5,  8, 11, 14]
+                nldas_idx  = [0,  3,  6,  9, 12, 15]
+                maurer_idx = [1,  4,  7, 10, 13, 15]
+                daymet_idx = [2,  5,  8, 11, 14, 15]
                 idx_map = {
                     'nldas':  nldas_idx,
                     'maurer': maurer_idx,
