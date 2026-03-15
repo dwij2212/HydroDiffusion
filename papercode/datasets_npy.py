@@ -392,7 +392,7 @@ class CamelsNPY(Dataset):
         
         # Zero out the future streamflow values (the last feature)
         # We assume the model only gets up to `seq_length` real SF, and the rest (H) is zeroed.
-        x_t[-self.forecast_horizon:, -1] = 0.0
+        x_t[-(self.forecast_horizon + 1):, -1] = 0.0
 
         y_t   = torch.from_numpy(self.y[idx])                      # (H,)
         q_m   = torch.tensor(self.q_means_s[idx], dtype=torch.float32)
