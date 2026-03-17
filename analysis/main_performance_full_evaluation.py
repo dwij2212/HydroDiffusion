@@ -152,6 +152,32 @@ def main():
                 "obsH": obsH, "simH": simH, "obsFDC": obsFDC, "simFDC": simFDC
             })
 
+    # --- Filtering out poor basins ---
+    all_lead_rows = []
+    for lead, rows in leadtime_stats.items():
+        all_lead_rows.extend(rows)
+
+    if all_lead_rows:
+        df_all = pd.DataFrame(all_lead_rows)
+        # Calculate mean NSE across all lead times for each basin
+        basin_nse = df_all.groupby("basin")["nse"].mean()
+        nse_threshold = 0.0
+        poor_basins = basin_nse[basin_nse < nse_threshold].index.tolist()
+        good_basins = basin_nse[basin_nse >= nse_threshold].index.tolist()
+
+        # Save poor and good basin lists
+        poor_df = pd.DataFrame({"basin": poor_basins, "mean_nse": basin_nse[poor_basins]})
+        poor_df.to_csv(os.path.join(out_root, f"{experiment}_poor_basins.csv"), index=False)
+        print(f"[INFO] Removed {len(poor_basins)} poor basins (Mean NSE < {nse_threshold}). Saved list to {experiment}_poor_basins.csv")
+
+        good_df = pd.DataFrame({"basin": good_basins, "mean_nse": basin_nse[good_basins]})
+        good_df.to_csv(os.path.join(out_root, f"{experiment}_good_basins.csv"), index=False)
+
+        # Filter leadtime_stats and unique_basins
+        for lead in leadtime_stats:
+            leadtime_stats[lead] = [r for r in leadtime_stats[lead] if r["basin"] in good_basins]
+        unique_basins = [b for b in unique_basins if b in good_basins]
+
     # Scalar metric columns — exclude array-valued FDC columns from aggregation
     SCALAR_METRICS = [
         "nse", "alpha_nse", "beta_nse",
@@ -205,6 +231,15 @@ def main():
     summary_csv = os.path.join(out_root, f"{experiment}_summary.csv")
 
 
+    # Also store per-lead mean for the mean summary table
+    mean_summary_rows = []
+    for lead, rows in leadtime_stats.items():
+        df_s = pd.DataFrame(rows)
+        if df_s.empty:
+            continue
+        mean_summary_rows.append({"lead_time": lead, **{m: float(df_s[m].mean()) for m in SCALAR_METRICS}})
+    df_mean_summary = pd.DataFrame(mean_summary_rows).sort_values("lead_time")
+
     # Overall aggregate across all lead times (median of per-lead medians)
     overall_median = df_summary[SCALAR_METRICS].median()
     overall_q25    = df_summary[[f"{m}_q25" for m in SCALAR_METRICS]].median()
@@ -252,6 +287,31 @@ def main():
         lo  = float(overall_q25[f"{col}_q25"])
         hi  = float(overall_q75[f"{col}_q75"])
         print(f"  {label:<10} {med:>+8.3f}   [{lo:+.3f}, {hi:+.3f}]")
+    print()
+
+    # ── Mean summary table ───────────────────────────────────────────────────
+    header_m = f"{'Metric':<12}" + "".join(f"{'Lead '+str(int(r['lead_time'])):<{col_w}}" for _, r in df_mean_summary.iterrows())
+    print(f"\n{'═'*len(header_m)}")
+    print(f"  MEAN TABLE  —  {experiment}")
+    print(f"{'═'*len(header_m)}")
+    print(f"  Mean across basins")
+    print("─" * len(header_m))
+    print(header_m)
+    print("─" * len(header_m))
+    for label, col in REPORT_METRICS:
+        row_str = f"{label:<12}"
+        for _, r in df_mean_summary.iterrows():
+            cell = f"{r[col]:+.3f}"
+            row_str += f"{cell:<{col_w}}"
+        print(row_str)
+    print("─" * len(header_m))
+
+    overall_mean_col = df_mean_summary[SCALAR_METRICS].mean()
+    print(f"\n  Overall (mean across leads):")
+    print(f"  {'Metric':<10} {'Mean':>8}")
+    print(f"  {'─'*22}")
+    for label, col in REPORT_METRICS:
+        print(f"  {label:<10} {float(overall_mean_col[col]):>+8.3f}")
     print()
 
     # =====================================================
