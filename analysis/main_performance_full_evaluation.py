@@ -319,6 +319,9 @@ def main():
     # =====================================================
     if deterministic:
         print("[INFO] Deterministic run detected — skipping ensemble metrics.")
+        df_summary.to_csv(summary_csv, index=False)
+        df_mean_summary.to_csv(summary_csv.replace("_summary.csv", "_mean_summary.csv"), index=False)
+        print(f"[INFO] Saved to {summary_csv}")
         print("All deterministic evaluation results saved.")
         return
 
@@ -410,6 +413,10 @@ def main():
             print(row_str)
         print()
 
+    df_summary.to_csv(summary_csv, index=False)
+    df_mean_summary.to_csv(summary_csv.replace("_summary.csv", "_mean_summary.csv"), index=False)
+    if prob_summary_rows:
+        df_prob_summary.to_csv(prob_summary_csv, index=False)
     print("All deterministic + probabilistic evaluation results saved.")
 
     # stats of preds and obs for debugging
