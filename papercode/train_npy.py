@@ -89,13 +89,19 @@ def init_weights(m):
 
 
 def _setup_run(cfg: Dict) -> Dict:
-    now = datetime.now().strftime("%d%m_%H%M")
-    run_name = f"run_{now}_seed{cfg['seed']}"
-    base = Path(__file__).resolve().parent.parent / "runs" / run_name
+    if cfg.get("run_dir") is not None:
+        # Resume mode: reuse existing directory
+        base = Path(cfg["run_dir"])
+        print(f"Resuming run at: {base}")
+    else:
+        # Fresh run: create new timestamped directory
+        now = datetime.now().strftime("%d%m_%H%M")
+        run_name = f"run_{now}_{cfg['model_name']}_nosf_seed{cfg['seed']}"
+        base = Path(__file__).resolve().parent.parent / "runs" / run_name
 
-    (base / "data" / "train").mkdir(parents=True, exist_ok=False)
-    (base / "data" / "val").mkdir(parents=True, exist_ok=False)
-    (base / "data" / "test").mkdir(parents=True, exist_ok=False)
+    (base / "data" / "train").mkdir(parents=True, exist_ok=True)
+    (base / "data" / "val").mkdir(parents=True, exist_ok=True)
+    (base / "data" / "test").mkdir(parents=True, exist_ok=True)
 
     cfg["run_dir"] = base
     cfg["train_dir"] = base / "data" / "train"
@@ -251,11 +257,29 @@ def train(cfg):
         best_val = float('inf')
         patience_ctr = 0
         train_losses, val_losses = [], []
-    
+        start_epoch = 1
+
         loss_log_path = cfg['run_dir'] / "loss_history.json"
         loss_log = {"train_loss": [], "val_loss": []}
-    
-        for epoch in range(1, cfg['epochs'] + 1):
+
+        # --- checkpoint resume ---
+        ckpt_path = cfg['run_dir'] / "checkpoint.pt"
+        if ckpt_path.exists():
+            ckpt = torch.load(ckpt_path, map_location=device)
+            model.load_state_dict(ckpt["model"])
+            ema.load_state_dict(ckpt["ema"])
+            optimizer.load_state_dict(ckpt["optimizer"])
+            scheduler.load_state_dict(ckpt["scheduler"])
+            if "optimizer_lstm" in ckpt:
+                optimizer_lstm.load_state_dict(ckpt["optimizer_lstm"])
+                scheduler_lstm.load_state_dict(ckpt["scheduler_lstm"])
+            best_val = ckpt["best_val"]
+            patience_ctr = ckpt["patience_ctr"]
+            start_epoch = ckpt["epoch"] + 1
+            loss_log = ckpt.get("loss_log", loss_log)
+            print(f"Resumed from checkpoint at epoch {ckpt['epoch']}, best_val={best_val:.6f}")
+
+        for epoch in range(start_epoch, cfg['epochs'] + 1):
             if cfg['model_name'] in ['diffusion_lstm', 'diffusion_unet', 'diffusion_ssm', 'decoder_only_ssm', 'decoder_only_lstm', 'diffusion_ssm_unet', 'diffusion_ssm_lstm']:
                 train_loss = train_diffusion_epoch(cfg, model, optimizer, scheduler, train_loader, epoch, ema)
             elif cfg['model_name'] in ['seq2seq_ssm', 'seq2seq_lstm', 'encdec_lstm']:
@@ -294,11 +318,25 @@ def train(cfg):
             else:
                 patience_ctr += 1
                 tqdm.write(f"No improvement. Patience: {patience_ctr}/10")
-
                 if patience_ctr >= 15:
                     tqdm.write("Early stopping triggered.")
                     break
-    
+
+            # Save checkpoint every epoch
+            ckpt = {
+                "epoch":         epoch,
+                "model":         model.state_dict(),
+                "ema":           ema.state_dict(),
+                "optimizer":     optimizer.state_dict(),
+                "scheduler":     scheduler.state_dict(),
+                "optimizer_lstm": optimizer_lstm.state_dict(),
+                "scheduler_lstm": scheduler_lstm.state_dict(),
+                "best_val":      best_val,
+                "patience_ctr":  patience_ctr,
+                "loss_log":      loss_log,
+            }
+            torch.save(ckpt, cfg['run_dir'] / "checkpoint.pt")
+
             # Dynamically write log after each epoch
             with open(loss_log_path, "w") as f:
                 json.dump(loss_log, f, indent=2)
@@ -329,9 +367,9 @@ def train_diffusion_epoch(cfg, model, optimizer, scheduler, loader, epoch, ema):
 
         x_d, y_norm = x_d.to(cfg['DEVICE']), y_norm.to(cfg['DEVICE'])
         
-        nldas_idx  = [0,  3,  6,  9, 12, 15]
-        maurer_idx = [1,  4,  7, 10, 13, 15]
-        daymet_idx = [2,  5,  8, 11, 14, 15]
+        nldas_idx  = [0,  3,  6,  9, 12]
+        maurer_idx = [1,  4,  7, 10, 13]
+        daymet_idx = [2,  5,  8, 11, 14]
         idx_map = {
             'nldas':  nldas_idx,
             'maurer': maurer_idx,
@@ -415,9 +453,9 @@ def validate_diffusion_epoch(cfg, model, loader, epoch, ema):
             x_d = x_d.to(cfg['DEVICE'])
             y_norm = y_norm.to(cfg['DEVICE'])
             
-            nldas_idx  = [0,  3,  6,  9, 12, 15]
-            maurer_idx = [1,  4,  7, 10, 13, 15]
-            daymet_idx = [2,  5,  8, 11, 14, 15]
+            nldas_idx  = [0,  3,  6,  9, 12]
+            maurer_idx = [1,  4,  7, 10, 13]
+            daymet_idx = [2,  5,  8, 11, 14]
             idx_map = {
                 'nldas':  nldas_idx,
                 'maurer': maurer_idx,
@@ -515,9 +553,9 @@ def train_epoch(cfg, model, optimizer, scheduler, loss_fn, loader, epoch, ema):
         if q_stds is not None: q_stds = to_dev(q_stds)
         
         
-        nldas_idx  = [0,  3,  6,  9, 12, 15]
-        maurer_idx = [1,  4,  7, 10, 13, 15]
-        daymet_idx = [2,  5,  8, 11, 14, 15]
+        nldas_idx  = [0,  3,  6,  9, 12]
+        maurer_idx = [1,  4,  7, 10, 13]
+        daymet_idx = [2,  5,  8, 11, 14]
         idx_map = {
             'nldas':  nldas_idx,
             'maurer': maurer_idx,
@@ -612,9 +650,9 @@ def validate_epoch(cfg, model, loader, loss_fn, epoch, ema):
             if (not cfg['use_mse']) and (q_stds is None):
                 q_stds = torch.ones_like(y, device=cfg['DEVICE'])
             
-            nldas_idx  = [0,  3,  6,  9, 12, 15]
-            maurer_idx = [1,  4,  7, 10, 13, 15]
-            daymet_idx = [2,  5,  8, 11, 14, 15]
+            nldas_idx  = [0,  3,  6,  9, 12]
+            maurer_idx = [1,  4,  7, 10, 13]
+            daymet_idx = [2,  5,  8, 11, 14]
             idx_map = {
                 'nldas':  nldas_idx,
                 'maurer': maurer_idx,
@@ -661,11 +699,11 @@ def validate_epoch(cfg, model, loader, loss_fn, epoch, ema):
 
 def _build_model(cfg: Dict):
     if cfg['forcing_source'] == 'all':
-        dyn_in = 16 
-        input_size_dyn = dyn_in if (cfg['no_static'] or not cfg['concat_static']) else 43
+        dyn_in = 15 
+        input_size_dyn = dyn_in if (cfg['no_static'] or not cfg['concat_static']) else 42
     else:
-        dyn_in = 6
-        input_size_dyn = dyn_in if (cfg['no_static'] or not cfg['concat_static']) else 33
+        dyn_in = 5
+        input_size_dyn = dyn_in if (cfg['no_static'] or not cfg['concat_static']) else 32
     static_size = 0 if cfg['no_static'] else (input_size_dyn - dyn_in)
 
     if cfg['model_name'] == 'seq2seq_lstm':   

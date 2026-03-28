@@ -9,7 +9,7 @@ with shape [num_basins, num_days, 33]:
 
 Normalization is computed at runtime from the **training** data passed in.
 The __getitem__ signature matches CamelsH5 exactly, so the existing
-training / evaluation loops work without modification, but now past SF is appended to forcing input variables making the input size larger.
+training / evaluation loops work without modification.
 """
 
 from pathlib import Path
@@ -157,10 +157,10 @@ def _build_windows(
     Create sliding windows for **one basin, one split**.
 
     Each window:
-      x  : (seq_length + forecast_horizon, 16)  — normalized forcing + past streamflow
-           (past 365 days + future 8 days of meteorological forcing + streamflow,
+      x  : (seq_length + forecast_horizon, 5)  — normalized forcing
+           (past 365 days + future 8 days of meteorological forcing,
             concatenated exactly as in create_h5_files / CamelsH5)
-      y  : (forecast_horizon,)                  — normalized SF targets
+      y  : (forecast_horizon,)                  — raw (un-normalized) SF targets
 
     Windows whose target contains **any** NaN or negative value are dropped.
 
@@ -196,14 +196,8 @@ def _build_windows(
         if np.isnan(target).any():
             continue
 
-        # input: (seq_length + fh) consecutive days of forcing + sf
-        x_window = forcing[i : i + total_len]    # (seq_length+fh, F)
-        sf_window = sf[i : i + total_len].reshape(-1, 1)  # (seq_length+fh, 1)
-        x_window = np.concatenate([x_window, sf_window], axis=-1) # (seq_length+fh, F+1)
-
-        if np.isnan(sf_window).any():
-            continue
-
+        # input: (seq_length + fh) consecutive days of forcing
+        x_window = forcing[i : i + total_len]    # (seq_length+fh, 5)
         x_list.append(x_window)
         y_list.append(target)
 
@@ -214,7 +208,7 @@ def _build_windows(
     if len(x_list) == 0:
         return None
 
-    x_arr = np.stack(x_list).astype(np.float32)    # (n, total_len, F+1)
+    x_arr = np.stack(x_list).astype(np.float32)   # (n, total_len, 5)
     y_arr = np.stack(y_list).astype(np.float32)    # (n, fh)
 
     n = x_arr.shape[0]
@@ -315,10 +309,10 @@ class CamelsNPY(Dataset):
         ).astype(np.float32)
 
         sf_split = data[:, split_idx, 32].copy()                    # (B, T_split)
-        # Normalize streamflow per-basin using the training-period mean/std of that basin's raw SF.
-        # evaluate_npy._denorm inverts this as: pred * std + mean
+        # Normalize streamflow per-basin using training q_mean/q_std.
+        # evaluate_npy._denorm inverts this as: pred * q_std + q_mean
         sf_split = (
-            (sf_split - scalar["output_mean"]) / scalar["output_std"]
+            (sf_split - q_means[:, 0:1]) / q_stds[:, 0:1]
         ).astype(np.float32)
 
         # ---- tile forcing from 5 → 15 (3 copies) so existing idx_map works ----
@@ -364,10 +358,7 @@ class CamelsNPY(Dataset):
             if include_dates and result["dates"] is not None:
                 all_dates.append(result["dates"])
 
-        self.forecast_horizon = forecast_horizon
-        self.seq_length = seq_length
-
-        self.x          = np.concatenate(all_x, axis=0)        # (N, L+H, 16)
+        self.x          = np.concatenate(all_x, axis=0)        # (N, L+H, 15)
         self.y          = np.concatenate(all_y, axis=0)        # (N, H)
         self.q_means_s  = np.concatenate(all_qm, axis=0)      # (N, 1)
         self.q_stds_s   = np.concatenate(all_qs, axis=0)      # (N, 1)
@@ -388,12 +379,7 @@ class CamelsNPY(Dataset):
 
     # ------------------------------------------------------------------
     def __getitem__(self, idx: int):
-        x_t   = torch.from_numpy(self.x[idx]).clone()              # (L+H, 16)
-        
-        # Zero out the future streamflow values (the last feature)
-        # We assume the model only gets up to `seq_length` real SF, and the rest (H) is zeroed.
-        x_t[-(self.forecast_horizon + 1):, -1] = 0.0
-
+        x_t   = torch.from_numpy(self.x[idx])                      # (L+H, 15)
         y_t   = torch.from_numpy(self.y[idx])                      # (H,)
         q_m   = torch.tensor(self.q_means_s[idx], dtype=torch.float32)
         q_s   = torch.tensor(self.q_stds_s[idx],  dtype=torch.float32)
