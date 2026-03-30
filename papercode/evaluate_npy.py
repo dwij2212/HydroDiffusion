@@ -334,7 +334,7 @@ def evaluate(cfg: dict):
         scalar=scalar, q_means=q_means, q_stds=q_stds,
         split_start=cfg['test_start'], split_end=cfg['test_end'],
         seq_length=cfg.get('seq_length', 365), forecast_horizon=cfg['forecast_horizon'],
-        stride=1,
+        stride=cfg.get('stride', 1),
         concat_static=cfg['concat_static'], no_static=cfg['no_static'],
         include_dates=True, is_train=False,
     )
