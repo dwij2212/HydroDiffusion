@@ -13,7 +13,7 @@ training / evaluation loops work without modification.
 """
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -288,12 +288,15 @@ class CamelsNPY(Dataset):
         self.no_static = no_static
         self.concat_static = concat_static
         self.include_dates = include_dates
+        self.seq_length = int(seq_length)
+        self.forecast_horizon = int(forecast_horizon)
+        self.total_len = self.seq_length + self.forecast_horizon
 
         # ---- date mask for this split ----
         date_series = pd.to_datetime(dates)
         mask = (date_series >= split_start) & (date_series <= split_end)
         split_idx = np.where(mask)[0]
-        dates_split = dates[split_idx]
+        self.dates_split = dates[split_idx]
 
         # ---- normalize static attrs (z-score across basins) ----
         static_raw = data[:, 0, :27].copy()                        # (B, 27)
@@ -303,75 +306,70 @@ class CamelsNPY(Dataset):
 
         # ---- normalize forcing globally ----
         # work on the split slice only to save memory
-        forcing_split = data[:, split_idx, 27:32].copy()            # (B, T_split, 5)
-        forcing_split = (
-            (forcing_split - scalar["input_means"]) / scalar["input_stds"]
+        self.forcing_split = data[:, split_idx, 27:32].copy()       # (B, T_split, 5)
+        self.forcing_split = (
+            (self.forcing_split - scalar["input_means"]) / scalar["input_stds"]
         ).astype(np.float32)
 
-        sf_split = data[:, split_idx, 32].copy()                    # (B, T_split)
+        self.sf_split = data[:, split_idx, 32].copy()               # (B, T_split)
         # Normalize streamflow per-basin using training q_mean/q_std.
         # evaluate_npy._denorm inverts this as: pred * q_std + q_mean
-        sf_split = (
-            (sf_split - q_means[:, 0:1]) / q_stds[:, 0:1]
+        self.sf_split = (
+            (self.sf_split - q_means[:, 0:1]) / q_stds[:, 0:1]
         ).astype(np.float32)
 
-        # ---- tile forcing from 5 → 15 (3 copies) so existing idx_map works ----
-        # order: [prcp_nldas, prcp_maurer, prcp_daymet, srad_nldas, ...]
-        # When forcing_source='daymet' the training loop picks indices [2,5,8,11,14]
-        # which corresponds to the 3rd copy of each variable — exactly our data.
-        forcing_tiled = np.tile(forcing_split, (1, 1, 3))           # (B, T_split, 15)
-        # re-arrange from [p,s,t,tm,v, p,s,t,tm,v, p,s,t,tm,v] (what tile gives)
-        # to          [p,p,p, s,s,s, t,t,t, tm,tm,tm, v,v,v] (what the repo expects)
-        # repo COLUMNS order: prcp_nldas,prcp_maurer,prcp_daymet, srad_nldas,...
-        idx_rearrange = []
-        for var_offset in range(5):          # 5 variables
-            for src in range(3):             # 3 sources
-                idx_rearrange.append(src * 5 + var_offset)
-        forcing_tiled = forcing_tiled[:, :, idx_rearrange]          # (B, T_split, 15)
+        # Expand 5 forcing variables to 15 virtual channels lazily in __getitem__.
+        # Final channel order matches the existing code expectations:
+        # [prcp_nldas, prcp_maurer, prcp_daymet, srad_nldas, ...]
+        self._forcing_15_idx = np.array(
+            [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4],
+            dtype=np.int64,
+        )
 
-        # ---- sliding windows per basin ----
-        all_x, all_y, all_qm, all_qs, all_basin, all_dates = [], [], [], [], [], []
+        self.q_means = np.asarray(q_means, dtype=np.float32).reshape(-1)
+        self.q_stds = np.asarray(q_stds, dtype=np.float32).reshape(-1)
+        self.basin_ids = np.asarray([str(b) for b in basins], dtype=object)
 
-        for b_idx in range(data.shape[0]):
-            basin_id = str(basins[b_idx])
-            result = _build_windows(
-                forcing       = forcing_tiled[b_idx],
-                sf            = sf_split[b_idx],
-                dates_split   = dates_split,
-                seq_length    = seq_length,
-                forecast_horizon = forecast_horizon,
-                basin_idx     = b_idx,
-                basin_id      = basin_id,
-                q_mean        = float(q_means[b_idx, 0]),
-                q_std         = float(q_stds[b_idx, 0]),
-                is_train      = is_train,
-                include_dates = include_dates,
-                stride        = stride,
-            )
-            if result is None:
+        # ---- build compact index arrays for valid windows ----
+        # Stores only (basin_idx, start_idx_in_split), not full windows.
+        basin_idx_chunks = []
+        start_idx_chunks = []
+        T_split = self.sf_split.shape[1]
+
+        for b_idx in range(self.sf_split.shape[0]):
+            N = T_split - self.total_len + 1
+            if N <= 0:
                 continue
-            all_x.append(result["x"])
-            all_y.append(result["y"])
-            all_qm.append(result["q_mean"])
-            all_qs.append(result["q_std"])
-            all_basin.append(result["basin"])
-            if include_dates and result["dates"] is not None:
-                all_dates.append(result["dates"])
 
-        self.x          = np.concatenate(all_x, axis=0)        # (N, L+H, 15)
-        self.y          = np.concatenate(all_y, axis=0)        # (N, H)
-        self.q_means_s  = np.concatenate(all_qm, axis=0)      # (N, 1)
-        self.q_stds_s   = np.concatenate(all_qs, axis=0)      # (N, 1)
-        self.basin_map  = np.concatenate(all_basin, axis=0)    # (N,) str
-        self.dates_arr  = (np.concatenate(all_dates, axis=0)
-                           if include_dates and all_dates else None)
+            valid_sf = ~np.isnan(self.sf_split[b_idx])
+            # target starts at (start + seq_length - 1) and spans forecast_horizon steps
+            target_valid = np.convolve(
+                valid_sf.astype(np.int16),
+                np.ones(self.forecast_horizon, dtype=np.int16),
+                mode="valid",
+            ) == self.forecast_horizon
 
-        # lookup: basin_id → row index in static_normed
-        self._basin2idx = {str(basins[i]): i for i in range(len(basins))}
+            start_candidates = np.arange(0, N, int(stride), dtype=np.int32)
+            target_start_offset = self.seq_length - 1
+            keep = target_valid[target_start_offset + start_candidates]
+            starts = start_candidates[keep]
+            if starts.size == 0:
+                continue
 
-        self.num_samples = self.x.shape[0]
+            basin_idx_chunks.append(np.full(starts.shape[0], b_idx, dtype=np.int32))
+            start_idx_chunks.append(starts)
+
+        if basin_idx_chunks:
+            self.sample_basin_idx = np.concatenate(basin_idx_chunks, axis=0)
+            self.sample_start_idx = np.concatenate(start_idx_chunks, axis=0)
+        else:
+            self.sample_basin_idx = np.empty((0,), dtype=np.int32)
+            self.sample_start_idx = np.empty((0,), dtype=np.int32)
+
+        self.num_samples = int(self.sample_start_idx.shape[0])
+        basins_used = len(np.unique(self.sample_basin_idx)) if self.num_samples > 0 else 0
         print(f"CamelsNPY [{split_start}→{split_end}]: "
-              f"{self.num_samples:,} samples from {len(set(self.basin_map))} basins")
+              f"{self.num_samples:,} samples from {basins_used} basins")
 
     # ------------------------------------------------------------------
     def __len__(self):
@@ -379,16 +377,24 @@ class CamelsNPY(Dataset):
 
     # ------------------------------------------------------------------
     def __getitem__(self, idx: int):
-        x_t   = torch.from_numpy(self.x[idx])                      # (L+H, 15)
-        y_t   = torch.from_numpy(self.y[idx])                      # (H,)
-        q_m   = torch.tensor(self.q_means_s[idx], dtype=torch.float32)
-        q_s   = torch.tensor(self.q_stds_s[idx],  dtype=torch.float32)
-        basin = self.basin_map[idx]
-        date  = self.dates_arr[idx] if self.dates_arr is not None else ""
+        b_idx = int(self.sample_basin_idx[idx])
+        start = int(self.sample_start_idx[idx])
+
+        x_5 = self.forcing_split[b_idx, start : start + self.total_len]  # (L+H, 5)
+        x_15 = x_5[:, self._forcing_15_idx]                               # (L+H, 15)
+        x_t = torch.from_numpy(np.ascontiguousarray(x_15))
+
+        y_start = start + self.seq_length - 1
+        y_end = y_start + self.forecast_horizon
+        y_t = torch.from_numpy(np.ascontiguousarray(self.sf_split[b_idx, y_start:y_end]))
+
+        q_m = torch.tensor([self.q_means[b_idx]], dtype=torch.float32)
+        q_s = torch.tensor([self.q_stds[b_idx]], dtype=torch.float32)
+        basin = self.basin_ids[b_idx]
+        date = str(self.dates_split[y_start]) if self.include_dates else ""
 
         if self.no_static:
             return x_t, y_t, q_m, q_s, basin, date
-        else:
-            b_row = self._basin2idx[basin]
-            attrs = torch.from_numpy(self.static_normed[b_row])    # (27,)
-            return x_t, attrs, y_t, q_m, q_s, basin, date
+
+        attrs = torch.from_numpy(self.static_normed[b_idx])
+        return x_t, attrs, y_t, q_m, q_s, basin, date
