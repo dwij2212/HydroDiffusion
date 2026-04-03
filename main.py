@@ -68,7 +68,7 @@ def get_args() -> Dict:
     parser.add_argument('--run_dir', type=str)
     parser.add_argument('--gpu', type=int, default=-1)
     parser.add_argument('--cache_data', type=str2bool, default=True)
-    parser.add_argument('--num_workers', type=int, default=2)
+    parser.add_argument('--num_workers', type=int, default=1)
     parser.add_argument('--no_static', type=str2bool, default=False)
     parser.add_argument('--concat_static', type=str2bool, default=True)
     parser.add_argument('--static_dim', type=int, default=27)
@@ -80,6 +80,8 @@ def get_args() -> Dict:
     parser.add_argument('--split_file', type=str, default=None)
     parser.add_argument('--eval_dataset', type=str, choices=['val','test'], default='val', help="Which split to score (only for mode=evaluate)")
     parser.add_argument('--epoch_num', type=int, default=60, help="Epoch number for evaluation")
+    parser.add_argument('--test_stride', type=int, default=1,
+                        help='Stride for test windowing in evaluate_npy (larger is faster, fewer windows)')
     
     parser.add_argument('--h5_dir', type=str, default= '/home/yihan/diffusion_ssm/runs/shared_h5_new/',
     help="If set, skip create_h5_files and read HDF5s from this folder")

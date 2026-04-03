@@ -52,7 +52,7 @@ def roc_auc_from_prob(p, y):
     P, N = tp[-1], fp[-1]
     if P == 0 or N == 0:
         return np.nan
-    return np.trapz(y=tp/P, x=fp/N)
+    return np.trapezoid(y=tp/P, x=fp/N)
 
 def event_reliability(p, y, bins=np.linspace(0,1,11)):
     inds = np.digitize(p, bins) - 1

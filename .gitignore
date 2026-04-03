@@ -1,6 +1,7 @@
 ensemble_stats/
 reports/
 runs/
+logs/
 *.pyc
 
 # Byte-compiled / optimized / DLL files
