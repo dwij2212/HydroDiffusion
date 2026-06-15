@@ -329,10 +329,15 @@ def evaluate(cfg: dict):
     model.eval()
     
     # --- data loader (NPY adapter) ---
+    # Extend split_start backward by seq_length so lookback can come from pre-test data
+    import pandas as pd
+    seq_len = cfg.get('seq_length', 365)
+    eval_split_start = pd.to_datetime(cfg['test_start']) - pd.Timedelta(days=seq_len)
+    print(f"[Eval] Extending split_start from {cfg['test_start']} back by {seq_len} days to {eval_split_start} for lookback")
     test_ds = CamelsNPY(
         data=data, dates=dates, basins=basins_all,
         scalar=scalar, q_means=q_means, q_stds=q_stds,
-        split_start=cfg['test_start'], split_end=cfg['test_end'],
+        split_start=eval_split_start, split_end=cfg['test_end'],
         seq_length=cfg.get('seq_length', 365), forecast_horizon=cfg['forecast_horizon'],
         stride=cfg.get('stride', 1),
         concat_static=cfg['concat_static'], no_static=cfg['no_static'],
@@ -446,6 +451,16 @@ def evaluate(cfg: dict):
     bas       = np.array(all_basin_ids, dtype="U32")      # avoid object dtype (pickle) -> pure unicode
     dts       = np.array(all_dates, dtype="datetime64[ns]")  # avoid object dtype
     ens_arr   = None if all_ens[0] is None else np.vstack(all_ens)  # (N,S,H) for diffusion
+    # Filter out samples with target dates before test_start (these were only generated to allow lookback)
+    test_start_dt64 = np.datetime64(pd.to_datetime(cfg['test_start']))
+    keep_mask = dts >= test_start_dt64
+    print(f"[Eval] Filtering predictions: keeping {keep_mask.sum()}/{len(dts)} samples with target_date >= {cfg['test_start']}")
+    preds_arr = preds_arr[keep_mask]
+    tgts_arr = tgts_arr[keep_mask]
+    bas = bas[keep_mask]
+    dts = dts[keep_mask]
+    if ens_arr is not None:
+        ens_arr = ens_arr[keep_mask]
 
     npz_path = run_dir / "predictions.npz"
 

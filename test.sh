@@ -74,7 +74,8 @@ for (( seed=firstseed; seed<firstseed+nseeds; seed++ )); do
       --cfr=10 \
       --pool_type='power'\
       --predict_mode='velocity'\
-      --forcing_source='daymet'\
+      --forcing_source='daymet' \
+      --stride=1
 
   elif [[ "$model" == "seq2seq_ssm" ]]; then
     python3 main.py evaluate_npy \
@@ -99,7 +100,8 @@ for (( seed=firstseed; seed<firstseed+nseeds; seed++ )); do
       --ssm_dropout=0.12 \
       --cfi=10 \
       --cfr=10 \
-      --forcing_source='daymet'\
+      --forcing_source='daymet' \
+      --stride=1
 
   elif [[ "$model" == "seq2seq_lstm" || "$model" == "encdec_lstm" ]]; then
     python3 main.py evaluate_npy \
@@ -110,7 +112,8 @@ for (( seed=firstseed; seed<firstseed+nseeds; seed++ )); do
       --concat_static="$concat_static" \
       --run_dir="$run_dir" \
       --epochs=30 \
-      --forcing_source='daymet'\
+      --forcing_source='daymet' \
+      --stride=1
 
   else
     # ------------------------- other models branch ---------------------------
@@ -122,7 +125,8 @@ for (( seed=firstseed; seed<firstseed+nseeds; seed++ )); do
       --concat_static="$concat_static" \
       --run_dir="$run_dir" \
       --predict_mode='velocity'\
-      --forcing_source='daymet'\
+      --forcing_source='daymet' \
+      --stride=1
 
   fi
 
