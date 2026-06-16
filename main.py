@@ -38,7 +38,7 @@ GLOBAL_SETTINGS = {
     'log_interval': 50,
     'learning_rate': 5e-3,
     'seq_length': 365,
-    'forecast_horizon': 8, # nowcast(1) + forecast(7) # 8
+    'forecast_horizon': 8,
     'train_start': pd.to_datetime('01-10-1980', format='%d-%m-%Y'),
     'train_end':   pd.to_datetime('30-09-1990', format='%d-%m-%Y'),
     'val_start':   pd.to_datetime('01-10-1990', format='%d-%m-%Y'),

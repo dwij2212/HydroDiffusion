@@ -84,7 +84,7 @@ class decoder_only_ssm(nn.Module):
         x_past:       torch.Tensor,  # (B, L, d_input)
         noisy_future: torch.Tensor,  # (B, H, 1)
         t:     torch.Tensor,  # (B, H, 1)
-        x_future:     torch.Tensor,  # (B, H-1, d_input), -1 is for excluding the nowcast day
+        x_future:     torch.Tensor,  # (B, H, d_input)
         static_attr:  torch.Tensor,  # (B, static_dim)
     ) -> torch.Tensor:
         B, L, _ = x_past.shape
@@ -94,23 +94,22 @@ class decoder_only_ssm(nn.Module):
         t_feats = self.mp(t) # (B, time_emb_dim)
 
         # Build feature sequence: met & flow & static
-        all_met    = torch.cat([x_past, x_future], dim=1)               # (B, L+H-1, d_input)
-        pad_flow   = torch.zeros(B, L-1, 1, device=device)
-        all_flow   = torch.cat([pad_flow, noisy_future], dim=1)         # (B, L+H-1, 1)
-        static_seq = static_attr[:,0,:].unsqueeze(1).expand(-1, L+H-1, -1)   
-        feats = torch.cat([all_met, all_flow, static_seq], dim=-1) # (B, L+H-1, d_input+1)
+        all_met    = torch.cat([x_past, x_future], dim=1)               # (B, L+H, d_input)
+        pad_flow   = torch.zeros(B, L, 1, device=device)
+        all_flow   = torch.cat([pad_flow, noisy_future], dim=1)         # (B, L+H, 1)
+        static_seq = static_attr[:,0,:].unsqueeze(1).expand(-1, L+H, -1)
+        feats = torch.cat([all_met, all_flow, static_seq], dim=-1) # (B, L+H, d_input+1)
 
         # Project to state dimension
         h = self.input_proj(feats)  # (B, L+H, d_model)
         
-        # Time bias: apply embedding at nowcast index L-1 or full horizon
+        # Time bias: apply embedding across forecast positions
         t_b = self.time_mlp(t_feats)  # (B, d_model)
         time_bias = torch.zeros_like(h)  # (B, L+H, d_model)
         if self.time_full:
-            # broadcast the time embedding across all forecast steps (positions L-1 to L+H-1)
-            time_bias[:, L-1:, :] = t_b.unsqueeze(1).expand(-1, self.H, -1)
+            time_bias[:, L:, :] = t_b.unsqueeze(1).expand(-1, self.H, -1)
         else:
-            time_bias[:, L-1, :] = t_b
+            time_bias[:, L, :] = t_b
         h = h + time_bias
         
         # Residual S4D stack
@@ -128,7 +127,7 @@ class decoder_only_ssm(nn.Module):
     def sample_ddim(self,
                     x_past: torch.Tensor,           # (B, L, d_input)
                     static_attributes: torch.Tensor,      # (B, S)
-                    future_pcp: torch.Tensor,       # (B, H-1, forcing_dim[5, 15])
+                    future_pcp: torch.Tensor,       # (B, H, forcing_dim[5, 15])
                     num_steps: int = 10,
                     eta: float = 0.0,
                    ) -> torch.Tensor:
@@ -138,7 +137,7 @@ class decoder_only_ssm(nn.Module):
         """
         device = x_past.device
         B, L, _ = x_past.shape
-        H = future_pcp.size(1) + 1
+        H = future_pcp.size(1)
 
         # create the uniform time grid [0..1]
         ts = torch.linspace(0., 1., num_steps, device=device)
@@ -156,14 +155,14 @@ class decoder_only_ssm(nn.Module):
             #   x_past:     (B, L, d_input)
             #   noisy_future: x        (B, H, 1)
             #   t:          t     (B, H, 1)
-            #   x_future:   future forcings (B, H-1, d_input), where H-1 is to exclude the nowcasting day
+            #   x_future:   future forcings (B, H, d_input)
             #   static_attr: static_msg  (B, S)
             # note: SSM signature is forward(x_past, noisy_future, t, x_future, static_attr)
             pred = self.forward(
                 x_past = x_past,
                 noisy_future = x, 
                 t = t,        # (B, H, 1), broadcasting is performed internally in forward
-                x_future = future_pcp,  # (B, H-1, d_input)
+                x_future = future_pcp,  # (B, H, d_input)
                 static_attr = static_attributes  # (B, S)
             )  # (B, H, 1)
 

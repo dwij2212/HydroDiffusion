@@ -158,9 +158,8 @@ def _build_windows(
 
     Each window:
       x  : (seq_length + forecast_horizon, 5)  — normalized forcing
-           (past 365 days + future 8 days of meteorological forcing,
-            concatenated exactly as in create_h5_files / CamelsH5)
-      y  : (forecast_horizon,)                  — raw (un-normalized) SF targets
+           (past 365 days + future 8 days of meteorological forcing)
+      y  : (forecast_horizon,)                  — next-8-day SF targets
 
     Windows whose target contains **any** NaN or negative value are dropped.
 
@@ -185,9 +184,8 @@ def _build_windows(
     date_list = []
 
     for i in range(0, N, stride):
-        # target: fh days of raw SF starting at (i + seq_length)
-        # include nowcasting day: indices [i+seq_length-1 .. i+seq_length+fh-2]
-        y_start = i + seq_length - 1        # nowcast day
+        # target: next fh days of raw SF after the 365-day history
+        y_start = i + seq_length
         y_end   = y_start + forecast_horizon
         target = sf[y_start:y_end]          # (fh,)
 
@@ -202,8 +200,8 @@ def _build_windows(
         y_list.append(target)
 
         if include_dates:
-            # date of the last past day (i.e. the "nowcast" day)
-            date_list.append(str(dates_split[i + seq_length - 1]))
+            # date of the first forecast target day
+            date_list.append(str(dates_split[y_start]))
 
     if len(x_list) == 0:
         return None
@@ -292,11 +290,15 @@ class CamelsNPY(Dataset):
         self.forecast_horizon = int(forecast_horizon)
         self.total_len = self.seq_length + self.forecast_horizon
 
-        # ---- date mask for this split ----
+        # ---- date bounds for this split ----
         date_series = pd.to_datetime(dates)
         mask = (date_series >= split_start) & (date_series <= split_end)
         split_idx = np.where(mask)[0]
-        self.dates_split = dates[split_idx]
+        if split_idx.size == 0:
+            raise ValueError(f"No dates found in split [{split_start}, {split_end}]")
+        self.dates_all = dates
+        split_start_idx = int(split_idx[0])
+        split_end_idx = int(split_idx[-1])
 
         # ---- normalize static attrs (z-score across basins) ----
         static_raw = data[:, 0, :27].copy()                        # (B, 27)
@@ -304,18 +306,17 @@ class CamelsNPY(Dataset):
             (static_raw - scalar["static_means"]) / scalar["static_stds"]
         ).astype(np.float32)                                        # (B, 27)
 
-        # ---- normalize forcing globally ----
-        # work on the split slice only to save memory
-        self.forcing_split = data[:, split_idx, 27:32].copy()       # (B, T_split, 5)
-        self.forcing_split = (
-            (self.forcing_split - scalar["input_means"]) / scalar["input_stds"]
+        # ---- normalize forcing globally over the full timeline ----
+        self.forcing_all = data[:, :, 27:32].copy()                 # (B, T_all, 5)
+        self.forcing_all = (
+            (self.forcing_all - scalar["input_means"]) / scalar["input_stds"]
         ).astype(np.float32)
 
-        self.sf_split = data[:, split_idx, 32].copy()               # (B, T_split)
+        self.sf_all = data[:, :, 32].copy()                         # (B, T_all)
         # Normalize streamflow per-basin using training q_mean/q_std.
         # evaluate_npy._denorm inverts this as: pred * q_std + q_mean
-        self.sf_split = (
-            (self.sf_split - q_means[:, 0:1]) / q_stds[:, 0:1]
+        self.sf_all = (
+            (self.sf_all - q_means[:, 0:1]) / q_stds[:, 0:1]
         ).astype(np.float32)
 
         # Expand 5 forcing variables to 15 virtual channels lazily in __getitem__.
@@ -331,27 +332,64 @@ class CamelsNPY(Dataset):
         self.basin_ids = np.asarray([str(b) for b in basins], dtype=object)
 
         # ---- build compact index arrays for valid windows ----
-        # Stores only (basin_idx, start_idx_in_split), not full windows.
+        # Stores only (basin_idx, start_idx_on_full_timeline), not full windows.
         basin_idx_chunks = []
         start_idx_chunks = []
-        T_split = self.sf_split.shape[1]
+        T_all = self.sf_all.shape[1]
 
-        for b_idx in range(self.sf_split.shape[0]):
-            N = T_split - self.total_len + 1
-            if N <= 0:
+        # Match the HydroFlow split semantics:
+        #   past    = [start, start + seq_length)
+        #   future  = [start + seq_length, start + seq_length + forecast_horizon)
+        # The final history day is inside the split, and all future targets stay
+        # inside the split. History before split_start is allowed.
+        w_start_min = max(0, split_start_idx - self.seq_length + 1)
+        w_start_max = min(
+            split_end_idx - self.seq_length - self.forecast_horizon + 1,
+            T_all - self.total_len,
+        )
+
+        if w_start_min > w_start_max:
+            self.sample_basin_idx = np.empty((0,), dtype=np.int32)
+            self.sample_start_idx = np.empty((0,), dtype=np.int32)
+            self.num_samples = 0
+            print(f"CamelsNPY [{split_start}→{split_end}]: "
+                  f"0 samples from 0 basins")
+            return
+
+        start_candidates = np.arange(
+            w_start_min, w_start_max + 1, int(stride), dtype=np.int32
+        )
+
+        for b_idx in range(self.sf_all.shape[0]):
+            valid_sf = ~np.isnan(self.sf_all[b_idx])
+            valid_forcing = ~np.isnan(self.forcing_all[b_idx]).any(axis=-1)
+
+            window_valid = np.convolve(
+                valid_sf.astype(np.int16),
+                np.ones(self.total_len, dtype=np.int16),
+                mode="valid",
+            ) == self.total_len
+            forcing_window_valid = np.convolve(
+                valid_forcing.astype(np.int16),
+                np.ones(self.total_len, dtype=np.int16),
+                mode="valid",
+            ) == self.total_len
+
+            if window_valid.size == 0:
                 continue
 
-            valid_sf = ~np.isnan(self.sf_split[b_idx])
-            # target starts at (start + seq_length - 1) and spans forecast_horizon steps
             target_valid = np.convolve(
                 valid_sf.astype(np.int16),
                 np.ones(self.forecast_horizon, dtype=np.int16),
                 mode="valid",
             ) == self.forecast_horizon
 
-            start_candidates = np.arange(0, N, int(stride), dtype=np.int32)
-            target_start_offset = self.seq_length - 1
-            keep = target_valid[target_start_offset + start_candidates]
+            target_start_offset = self.seq_length
+            keep = (
+                window_valid[start_candidates]
+                & forcing_window_valid[start_candidates]
+                & target_valid[target_start_offset + start_candidates]
+            )
             starts = start_candidates[keep]
             if starts.size == 0:
                 continue
@@ -380,18 +418,18 @@ class CamelsNPY(Dataset):
         b_idx = int(self.sample_basin_idx[idx])
         start = int(self.sample_start_idx[idx])
 
-        x_5 = self.forcing_split[b_idx, start : start + self.total_len]  # (L+H, 5)
+        x_5 = self.forcing_all[b_idx, start : start + self.total_len]    # (L+H, 5)
         x_15 = x_5[:, self._forcing_15_idx]                               # (L+H, 15)
         x_t = torch.from_numpy(np.ascontiguousarray(x_15))
 
-        y_start = start + self.seq_length - 1
+        y_start = start + self.seq_length
         y_end = y_start + self.forecast_horizon
-        y_t = torch.from_numpy(np.ascontiguousarray(self.sf_split[b_idx, y_start:y_end]))
+        y_t = torch.from_numpy(np.ascontiguousarray(self.sf_all[b_idx, y_start:y_end]))
 
         q_m = torch.tensor([self.q_means[b_idx]], dtype=torch.float32)
         q_s = torch.tensor([self.q_stds[b_idx]], dtype=torch.float32)
         basin = self.basin_ids[b_idx]
-        date = str(self.dates_split[y_start]) if self.include_dates else ""
+        date = str(self.dates_all[y_start]) if self.include_dates else ""
 
         if self.no_static:
             return x_t, y_t, q_m, q_s, basin, date

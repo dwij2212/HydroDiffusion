@@ -306,15 +306,7 @@ def train_diffusion_epoch(cfg, model, optimizer, scheduler, loader, epoch, ema):
 
         x_past = x_d[:, :-fh, :]
         
-        if cfg['model_name'] in ['decoder_only_ssm','decoder_only_lstm']:
-            future_precip = x_d[:, -fh+1:, :]
-        else:
-            future_precip = x_d[:, -fh:, :]
-            
-        # ======================================= 
-        # todo, slice out the nowcast y_norm
-        #y_norm = y_norm[:,1:]
-        # ======================================= 
+        future_precip = x_d[:, -fh:, :]
 
         if (not cfg['no_static']) and cfg['concat_static'] and cfg['model_name'] not in ['decoder_only_ssm','decoder_only_lstm']:
             stat_p = static_attrs.expand(-1, x_past.size(1), static_attrs.size(-1))  # [batch, seq_len, 27]
@@ -396,15 +388,7 @@ def validate_diffusion_epoch(cfg, model, loader, epoch, ema):
             # 2) split
             x_past = x_d[:, :-fh, :]
                     
-            if cfg['model_name'] in ['decoder_only_ssm','decoder_only_lstm']:
-                future_precip = x_d[:, -fh+1:, :]
-            else:
-                future_precip = x_d[:, -fh:, :]
-                
-            # ======================================= 
-            # todo, slice out the nowcast y_norm
-            #y_norm = y_norm[:,1:]
-            # ======================================= 
+            future_precip = x_d[:, -fh:, :]
                 
             if (not cfg['no_static']) and cfg['concat_static'] and cfg['model_name'] not in ['decoder_only_ssm','decoder_only_lstm']:
                 stat_p = static_attrs.expand(-1, x_past.size(1), static_attrs.size(-1))  # [batch, seq_len, 27]
@@ -503,10 +487,7 @@ def train_epoch(cfg, model, optimizer, scheduler, loss_fn, loader, epoch, ema):
 
         # ---- model-specific inputs -------------------------------------
         x_past = x[:, :-fh, :]
-        if cfg['model_name'] == 'encdec_lstm':
-            future_prec = x[:, -fh:, :]
-        elif cfg['model_name'] in ['seq2seq_ssm', 'seq2seq_lstm']:
-            future_prec = x[:, -fh+1:, :]
+        future_prec = x[:, -fh:, :]
         if (not cfg['no_static']) and cfg['concat_static']:
             stat_p = static_attrs.unsqueeze(1).repeat(1, x_past.size(1),     1)
             stat_f = static_attrs.unsqueeze(1).repeat(1, future_prec.size(1), 1)
@@ -596,10 +577,7 @@ def validate_epoch(cfg, model, loader, loss_fn, epoch, ema):
     
             # -------- forward ------------------------------------------------
             x_past = x[:, :-fh, :]
-            if cfg['model_name'] == 'encdec_lstm':
-                future_prec = x[:, -fh:, :]
-            elif cfg['model_name'] in ['seq2seq_ssm','seq2seq_lstm']:
-                future_prec = x[:, -fh+1:, :]
+            future_prec = x[:, -fh:, :]
             if (not cfg['no_static']) and cfg['concat_static']:
                 stat_p = static_attrs.unsqueeze(1).repeat(1, x_past.size(1),     1)
                 stat_f = static_attrs.unsqueeze(1).repeat(1, future_prec.size(1), 1)
@@ -757,7 +735,7 @@ def _build_model(cfg: Dict):
             static_dim = cfg.get('static_dim', 27),
             dropout    = cfg['ssm_dropout'],
             pool_type  = cfg['pool_type'],
-            horizon = cfg['forecast_horizon'] # todo, test without nowcast!
+            horizon = cfg['forecast_horizon']
         )
         
         decoder = ssm_v2(
@@ -972,4 +950,3 @@ def _prepare_data(cfg: Dict, basins: List[str]) -> Dict:
     )
 
     return cfg
-

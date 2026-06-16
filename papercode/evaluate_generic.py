@@ -163,7 +163,7 @@ def evaluate(cfg: dict):
             )
             # 2) decoder: GenericLSTM consuming one-dim noise
             decoder = GenericLSTM(
-                input_size = 1+dyn_in+27, #todo, 2 for concatenation, 1 for no concatenation, 258 for concat also t_emb, 4 for nowcasting
+                input_size = 1+dyn_in+27, #todo, 2 for concatenation, 1 for no concatenation, 258 for concat also t_emb
                 hidden_size= cfg["hidden_size"],
                 dropout    = cfg["dropout"],
                 init_forget_bias=cfg['initial_forget_gate_bias'],
@@ -452,21 +452,13 @@ def evaluate(cfg: dict):
                     x_past = x_d[:, :-fh, :]
                     
                     # forcing choice
-                    if cfg['model_name'] in ['decoder_only_ssm','decoder_only_lstm']:
-                        future_prec = x_d[:, -fh+1:, :]
-                    else:
-                        future_prec = x_d[:, -fh:, :]
+                    future_prec = x_d[:, -fh:, :]
                         
                     if (not cfg['no_static']) and cfg['concat_static'] and cfg['model_name'] not in ['decoder_only_ssm', 'decoder_only_lstm']:
                         stat_p = static_attrs.unsqueeze(1).repeat(1, x_past.size(1), 1)  # [batch, seq_len, 27]
                         x_past = torch.cat([x_past, stat_p], dim=-1)
                     stat_f = static_attrs.unsqueeze(1).repeat(1, future_prec.size(1), 1)
                         
-                    # ======================================= 
-                    # todo, slice out the nowcast y_norm
-                    #y_t = y_t[:,1:]
-                    # ======================================= 
-                    
                     # wrappers built-in sampler
                     ens = []
                     for _ in range(cfg.get("num_samples",50)):
@@ -486,10 +478,7 @@ def evaluate(cfg: dict):
     
                 else:
                     x_past = x_d[:, :-fh, :]
-                    if cfg['model_name'] == 'encdec_lstm':
-                        future_prec = x_d[:, -fh:, :]
-                    elif cfg['model_name'] in ['seq2seq_ssm','seq2seq_lstm']:
-                        future_prec = x_d[:, -fh+1:, :]
+                    future_prec = x_d[:, -fh:, :]
                     if (not cfg['no_static']) and cfg['concat_static']:
                         stat_p = static_attrs.unsqueeze(1).repeat(1, x_past.size(1),     1)
                         stat_f = static_attrs.unsqueeze(1).repeat(1, future_prec.size(1), 1)

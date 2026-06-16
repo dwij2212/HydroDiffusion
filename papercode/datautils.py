@@ -295,7 +295,7 @@ def rescale_features(feature: np.ndarray, variable: str) -> np.ndarray:
 #@njit
 def reshape_data(x: np.ndarray, y: np.ndarray, seq_length: int, horizon: int) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Numba-accelerated sliding-window: inputs of length seq_length and targets of length horizon.
+    Sliding-window: inputs of length seq_length and the next horizon targets.
     """
     T, F = x.shape
     N = T - seq_length - horizon + 1
@@ -310,8 +310,7 @@ def reshape_data(x: np.ndarray, y: np.ndarray, seq_length: int, horizon: int) ->
                 x_windows[i, t, f] = x[i + t, f]
         # targets
         for h in range(horizon):
-            #y_windows[i, h] = y[i + seq_length + h, 0]
-            y_windows[i, h] = y[i + seq_length + h - 1, 0] # include nowcasting 
+            y_windows[i, h] = y[i + seq_length + h, 0]
     return x_windows, y_windows
 
 

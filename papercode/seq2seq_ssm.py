@@ -59,7 +59,7 @@ class seq2seq_ssm(nn.Module):
     def forward(
         self,
         x_past:       torch.Tensor,  # (B, L, d_input)
-        x_future:     torch.Tensor,  # (B, H-1, d_input), -1 is for excluding the nowcast day
+        x_future:     torch.Tensor,  # (B, H, d_input)
         static_attr:  torch.Tensor,  # (B, static_dim)
     ) -> torch.Tensor:
         B, L, _ = x_past.shape
@@ -68,24 +68,24 @@ class seq2seq_ssm(nn.Module):
 
 
         # Build feature sequence: met & flow & static
-        all_met    = torch.cat([x_past, x_future], dim=1)               # (B, L+H-1, d_input)
-        #static_seq = static_attr[:,0,:].unsqueeze(1).expand(-1, L+H-1, -1)   
-        if static_attr:
-          static_seq = static_attr.unsqueeze(1).expand(-1, L+H-1, -1)
-          feats = torch.cat([all_met, static_seq], dim=-1) # (B, L+H-1, d_input)
+        all_met    = torch.cat([x_past, x_future], dim=1)               # (B, L+H, d_input)
+        #static_seq = static_attr[:,0,:].unsqueeze(1).expand(-1, L+H, -1)
+        if static_attr is not None:
+          static_seq = static_attr.unsqueeze(1).expand(-1, L+H, -1)
+          feats = torch.cat([all_met, static_seq], dim=-1) # (B, L+H, d_input)
         else:
           feats = all_met
 
         # Project to state dimension
-        h = self.input_proj(feats)  # (B, L+H-1, d_model)
+        h = self.input_proj(feats)  # (B, L+H, d_model)
         
         # Residual S4D stack
-        h = h.transpose(1, 2)  # (B, d_model, L+H-1)
+        h = h.transpose(1, 2)  # (B, d_model, L+H)
         for blk, norm, drop in zip(self.blocks, self.norms, self.drops):
             z, _ = blk(h)
             h    = norm(h + drop(z))
-        h = h.transpose(1, 2)  # (B, L+H-1, d_model)
+        h = h.transpose(1, 2)  # (B, L+H, d_model)
 
         # Predict only the future window
-        out = self.head(h)          # (B, L+H-1, 1)
+        out = self.head(h)          # (B, L+H, 1)
         return out[:, -H:, :]       # (B, H, 1)

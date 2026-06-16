@@ -25,7 +25,7 @@ def create_h5_files(
     is_train: bool = True,
     with_basin_str: bool = True,
     seq_length: int = 365,
-    forecast_horizon: int = 8, # 7+1(nowcast)
+    forecast_horizon: int = 8,
     include_dates: bool = False
 ):
     if out_file.is_file():
@@ -75,7 +75,7 @@ def create_h5_files(
             x_np = ds.x.numpy()
             y_np = ds.y.numpy()
             N = x_np.shape[0]
-            num_samples = N - forecast_horizon - 1 
+            num_samples = N - forecast_horizon
 
             x_combined = []
             y_combined = []
@@ -84,7 +84,7 @@ def create_h5_files(
 
             for i in range(num_samples):
                 past = x_np[i]
-                future = x_np[i:i+forecast_horizon, -1, :] # i+1:i+1+forecast_horizon, wrong!
+                future = x_np[i+1:i+1+forecast_horizon, -1, :]
                 target = y_np[i]
 
                 mean_q = ds.output_mean
@@ -98,7 +98,7 @@ def create_h5_files(
                 y_combined.append(target)
                 q_combined.append([mean_q, std_q])
                 if include_dates:
-                    dt = ds.period_start + pd.Timedelta(days=i)
+                    dt = ds.period_start + pd.Timedelta(days=i + 1)
                     date_strings.append(dt.strftime('%Y-%m-%d'))
 
             if not x_combined:
