@@ -8,12 +8,13 @@ with shape [num_basins, num_days, 33]:
     - col  32    : streamflow (SF)
 
 Normalization is computed at runtime from the **training** data passed in.
+Streamflow is always normalized as log1p(streamflow) plus a global z-score.
 The __getitem__ signature matches CamelsH5 exactly, so the existing
 training / evaluation loops work without modification.
 """
 
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
@@ -66,14 +67,12 @@ def compute_normalization(
     train_end: str = "1990-09-30",
 ) -> Dict[str, np.ndarray]:
     """
-    Compute global mean / std of forcings and SF over the training period
+    Compute global mean / std of forcings and static attributes over the training period
     (all basins × training days).  Called once, result shared by all splits.
 
     Returns a dict with the same keys as the repo's SCALAR convention:
         input_means  (5,)
         input_stds   (5,)
-        output_mean  (1,)
-        output_std   (1,)
         static_means (27,)
         static_stds  (27,)
     """
@@ -82,142 +81,102 @@ def compute_normalization(
     train_idx = np.where(mask)[0]
 
     forcing = data[:, train_idx, 27:32]          # (B, T_train, 5)
-    sf      = data[:, train_idx, 32:33]          # (B, T_train, 1)
-    static  = data[:, 0, :27]                    # (B, 27) — constant per basin
+    static  = data[:, 0, :27]                    # (B, 27) — constant catchment attrs
 
     f_flat = forcing.reshape(-1, 5)
-    s_flat = sf.reshape(-1, 1)
 
     scalar = {
         "input_means":  np.nanmean(f_flat, axis=0),   # (5,)
         "input_stds":   np.nanstd(f_flat, axis=0),    # (5,)
-        "output_mean":  np.nanmean(s_flat, axis=0),   # (1,)
-        "output_std":   np.nanstd(s_flat, axis=0),    # (1,)
         "static_means": np.nanmean(static, axis=0),   # (27,)
         "static_stds":  np.nanstd(static, axis=0),    # (27,)
     }
     # guard against zero std
     scalar["input_stds"][scalar["input_stds"] == 0] = 1.0
-    scalar["output_stds"] = np.where(scalar["output_std"] == 0, 1.0, scalar["output_std"])
     scalar["static_stds"][scalar["static_stds"] == 0] = 1.0
 
     return scalar
 
 
-# ------------------------------------------------------------------ #
-#  Per-basin discharge statistics (needed for NSE loss)              #
-# ------------------------------------------------------------------ #
-
-def compute_per_basin_q_stats(
+def compute_global_log_stats(
     data: np.ndarray,
     dates: np.ndarray,
     train_start: str = "1980-10-01",
     train_end: str = "1990-09-30",
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[float, float]:
     """
-    Compute per-basin mean & std of raw streamflow over the training period.
-
-    Returns
-    -------
-    q_means : (B, 1)
-    q_stds  : (B, 1)
+    Compute global mean/std of log1p(streamflow) over train basins and dates.
+    This is the ungauged-basin streamflow normalization.
     """
     date_series = pd.to_datetime(dates)
     mask = (date_series >= train_start) & (date_series <= train_end)
     train_idx = np.where(mask)[0]
 
-    sf = data[:, train_idx, 32]                  # (B, T_train)
-    q_means = np.nanmean(sf, axis=1, keepdims=True).astype(np.float32)  # (B, 1)
-    q_stds  = np.nanstd(sf, axis=1, keepdims=True).astype(np.float32)  # (B, 1)
+    sf = data[:, train_idx, 32]
+    log_sf = np.log1p(np.clip(sf, 0, None))
 
-    # guard: if a basin has std==0 (e.g. all NaN), set to 1 to avoid /0
-    q_stds[q_stds == 0] = 1.0
-    return q_means, q_stds
+    global_log_mean = float(np.nanmean(log_sf))
+    global_log_std = float(np.nanstd(log_sf))
+    if global_log_std == 0:
+        global_log_std = 1.0
+
+    return global_log_mean, global_log_std
 
 
-# ------------------------------------------------------------------ #
-#  Sliding-window builder (mirrors create_h5_files logic)            #
-# ------------------------------------------------------------------ #
+def load_basin_assignment_masks(
+    basin_assignment_csv: str,
+    basins: np.ndarray,
+) -> Dict[str, np.ndarray]:
+    """Load train/test basin labels from CSV and return boolean masks."""
+    csv_path = Path(basin_assignment_csv).expanduser().resolve()
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Basin assignment CSV not found: {csv_path}")
 
-def _build_windows(
-    forcing: np.ndarray,
-    sf: np.ndarray,
-    dates_split: np.ndarray,
-    seq_length: int,
-    forecast_horizon: int,
-    basin_idx: int,
-    basin_id: str,
-    q_mean: float,
-    q_std: float,
-    is_train: bool,
-    include_dates: bool,
-    stride: int = 1,
-) -> Optional[Dict[str, np.ndarray]]:
-    """
-    Create sliding windows for **one basin, one split**.
+    assignment_df = pd.read_csv(
+        csv_path,
+        dtype={"Basin_ID": str, "Label": str},
+        usecols=["Basin_ID", "Label"],
+    )
+    assignment_df["Basin_ID"] = assignment_df["Basin_ID"].fillna("").astype(str).str.strip()
+    assignment_df["Label"] = (
+        assignment_df["Label"].fillna("").astype(str).str.strip().str.lower()
+    )
 
-    Each window:
-      x  : (seq_length + forecast_horizon, 5)  — normalized forcing
-           (past 365 days + future 8 days of meteorological forcing)
-      y  : (forecast_horizon,)                  — next-8-day SF targets
+    if (assignment_df["Basin_ID"] == "").any():
+        raise ValueError(f"Empty Basin_ID found in basin assignment CSV: {csv_path}")
+    assignment_df["Basin_ID"] = assignment_df["Basin_ID"].str.zfill(8)
 
-    Windows whose target contains **any** NaN or negative value are dropped.
+    invalid_labels = assignment_df.loc[
+        ~assignment_df["Label"].isin(["train", "test"]), "Label"
+    ].unique()
+    if len(invalid_labels) > 0:
+        raise ValueError(
+            "Basin assignment CSV only supports 'train' and 'test' labels; "
+            f"found {sorted(invalid_labels.tolist())}"
+        )
 
-    Parameters
-    ----------
-    stride : int
-        Step size between consecutive window start positions.
-        stride=1  → original HydroDiffusion behaviour (~3 280 windows / basin / 10 yr)
-        stride=90 → ~36 windows / basin / 10 yr (good for fast debugging)
+    duplicate_ids = assignment_df.loc[
+        assignment_df["Basin_ID"].duplicated(keep=False), "Basin_ID"
+    ].unique()
+    if len(duplicate_ids) > 0:
+        preview = ", ".join(duplicate_ids[:10])
+        raise ValueError(f"Duplicate Basin_ID entries found in basin assignment CSV: {preview}")
 
-    Returns None if no valid windows exist for this basin.
-    """
-    T = forcing.shape[0]               # time-steps in this split
-    total_len = seq_length + forecast_horizon
-    N = T - total_len + 1               # number of possible windows
-    if N <= 0:
-        return None
+    basin_labels = assignment_df.set_index("Basin_ID")["Label"]
+    basin_ids = pd.Series([str(b).strip().zfill(8) for b in basins])
+    matched_labels = basin_ids.map(basin_labels)
 
-    # pre-allocate
-    x_list = []
-    y_list = []
-    date_list = []
+    train_mask = matched_labels.eq("train").to_numpy()
+    test_mask = matched_labels.eq("test").to_numpy()
+    if not train_mask.any() or not test_mask.any():
+        raise ValueError(
+            "Basin assignment CSV did not match at least one train basin and one test basin"
+        )
 
-    for i in range(0, N, stride):
-        # target: next fh days of raw SF after the 365-day history
-        y_start = i + seq_length
-        y_end   = y_start + forecast_horizon
-        target = sf[y_start:y_end]          # (fh,)
+    print(f"Using basin assignment CSV: {csv_path}")
+    print(f"  Basin subsets: train={int(train_mask.sum())}, test={int(test_mask.sum())}")
 
-        # skip if any target is NaN (streamflow is now z-score normalized,
-        # so negative values are valid — only NaN means missing data)
-        if np.isnan(target).any():
-            continue
-
-        # input: (seq_length + fh) consecutive days of forcing
-        x_window = forcing[i : i + total_len]    # (seq_length+fh, 5)
-        x_list.append(x_window)
-        y_list.append(target)
-
-        if include_dates:
-            # date of the first forecast target day
-            date_list.append(str(dates_split[y_start]))
-
-    if len(x_list) == 0:
-        return None
-
-    x_arr = np.stack(x_list).astype(np.float32)   # (n, total_len, 5)
-    y_arr = np.stack(y_list).astype(np.float32)    # (n, fh)
-
-    n = x_arr.shape[0]
-    return {
-        "x":       x_arr,
-        "y":       y_arr,
-        "q_mean":  np.full((n, 1), q_mean, dtype=np.float32),
-        "q_std":   np.full((n, 1), q_std,  dtype=np.float32),
-        "basin":   np.array([basin_id] * n),
-        "dates":   np.array(date_list) if include_dates else None,
-    }
+    return {"train": train_mask, "test": test_mask}
 
 
 # ------------------------------------------------------------------ #
@@ -238,8 +197,8 @@ class CamelsNPY(Dataset):
         Basin-ID strings (B,) matching ``data`` axis-0.
     scalar : dict
         Normalization statistics (from ``compute_normalization``).
-    q_means, q_stds : np.ndarray
-        Per-basin discharge statistics (B,1) from ``compute_per_basin_q_stats``.
+    global_log_mean, global_log_std : float
+        Global log1p(streamflow) normalization statistics.
     split_start, split_end : str
         Date strings for the current split (e.g. '1980-10-01', '1990-09-30').
     seq_length : int
@@ -267,8 +226,8 @@ class CamelsNPY(Dataset):
         dates: np.ndarray,
         basins: np.ndarray,
         scalar: Dict[str, np.ndarray],
-        q_means: np.ndarray,
-        q_stds: np.ndarray,
+        global_log_mean: float,
+        global_log_std: float,
         split_start: str,
         split_end: str,
         seq_length: int = 365,
@@ -289,6 +248,8 @@ class CamelsNPY(Dataset):
         self.seq_length = int(seq_length)
         self.forecast_horizon = int(forecast_horizon)
         self.total_len = self.seq_length + self.forecast_horizon
+        self.global_log_mean = float(global_log_mean)
+        self.global_log_std = float(global_log_std)
 
         # ---- date bounds for this split ----
         date_series = pd.to_datetime(dates)
@@ -313,10 +274,9 @@ class CamelsNPY(Dataset):
         ).astype(np.float32)
 
         self.sf_all = data[:, :, 32].copy()                         # (B, T_all)
-        # Normalize streamflow per-basin using training q_mean/q_std.
-        # evaluate_npy._denorm inverts this as: pred * q_std + q_mean
+        sf_log = np.log1p(np.clip(self.sf_all, 0, None)).astype(np.float32)
         self.sf_all = (
-            (self.sf_all - q_means[:, 0:1]) / q_stds[:, 0:1]
+            (sf_log - self.global_log_mean) / self.global_log_std
         ).astype(np.float32)
 
         # Expand 5 forcing variables to 15 virtual channels lazily in __getitem__.
@@ -327,8 +287,6 @@ class CamelsNPY(Dataset):
             dtype=np.int64,
         )
 
-        self.q_means = np.asarray(q_means, dtype=np.float32).reshape(-1)
-        self.q_stds = np.asarray(q_stds, dtype=np.float32).reshape(-1)
         self.basin_ids = np.asarray([str(b) for b in basins], dtype=object)
 
         # ---- build compact index arrays for valid windows ----
@@ -426,13 +384,13 @@ class CamelsNPY(Dataset):
         y_end = y_start + self.forecast_horizon
         y_t = torch.from_numpy(np.ascontiguousarray(self.sf_all[b_idx, y_start:y_end]))
 
-        q_m = torch.tensor([self.q_means[b_idx]], dtype=torch.float32)
-        q_s = torch.tensor([self.q_stds[b_idx]], dtype=torch.float32)
+        norm_m = torch.tensor([self.global_log_mean], dtype=torch.float32)
+        norm_s = torch.tensor([self.global_log_std], dtype=torch.float32)
         basin = self.basin_ids[b_idx]
         date = str(self.dates_all[y_start]) if self.include_dates else ""
 
         if self.no_static:
-            return x_t, y_t, q_m, q_s, basin, date
+            return x_t, y_t, norm_m, norm_s, basin, date
 
         attrs = torch.from_numpy(self.static_normed[b_idx])
-        return x_t, attrs, y_t, q_m, q_s, basin, date
+        return x_t, attrs, y_t, norm_m, norm_s, basin, date

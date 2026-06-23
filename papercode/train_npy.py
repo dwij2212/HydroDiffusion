@@ -3,7 +3,6 @@ import numpy as np
 import json
 import pickle
 from pathlib import Path, PosixPath
-import pandas as pd
 from datetime import datetime
 from tqdm import tqdm
 from torch.utils.data import DataLoader
@@ -45,10 +44,19 @@ from papercode.diffusion_utils import diffusion_params
 import os, gc
 
 from papercode.datasets_npy import (
-    load_npy_data, compute_normalization, compute_per_basin_q_stats, CamelsNPY
+    load_npy_data,
+    compute_normalization,
+    compute_global_log_stats,
+    load_basin_assignment_masks,
+    CamelsNPY,
 )
 
 RAW_DIR = '/projects/standard/kumarv/renga/Public/DATA/camels_us_531/RAW'
+
+
+def _basin_assignment_csv(cfg: Dict):
+    path = cfg.get('basin_assignment_csv') or cfg.get('basin_split_csv')
+    return None if path in (None, '', 'None') else path
 
 def _make_loader(dataset, batch_size, shuffle, num_workers):
     nw = int(num_workers)
@@ -122,34 +130,38 @@ def _prepare_data(cfg: Dict) -> Dict:
     )
 
     print()
-    print('=== Step 2: Compute normalization from training period (all basins) ===')
-    scalar = compute_normalization(data, dates)
+    print('=== Step 2: Prepare normalization basins ===')
+    basin_assignment_csv = _basin_assignment_csv(cfg)
+    stats_data = data
 
-    # --- spatial split: filter to train basins if basin_split_csv is provided ---
-    if cfg.get('basin_split_csv'):
-        import pandas as pd
-        split_df = pd.read_csv(cfg['basin_split_csv'])
-        train_ids = set(split_df[split_df['Label'] == 'train']['Basin_ID'].astype(str).str.zfill(8))
-        mask = np.array([b in train_ids for b in basins])
-        data = data[mask]
-        basins = basins[mask]
-        print(f'[Spatial split] Using {mask.sum()} train basins out of {len(mask)} total')
+    if basin_assignment_csv:
+        basin_masks = load_basin_assignment_masks(basin_assignment_csv, basins)
+        stats_data = data[basin_masks['train']]
+        data = stats_data
+        basins = basins[basin_masks['train']]
+        print(f'[Spatial split] Training on {len(basins)} train basins')
+
+    print()
+    print('=== Step 3: Compute normalization from training period ===')
+    scalar = compute_normalization(
+        stats_data, dates, cfg['train_start'], cfg['train_end']
+    )
     for k, v in scalar.items():
         print(f'  {k}: {v}')
 
     print()
-    print('=== Step 3: Compute per-basin Q stats ===')
-    q_means, q_stds = compute_per_basin_q_stats(data, dates)
-    print(f'q_means: {q_means.shape}, q_stds: {q_stds.shape}')
-    print(f'q_means range: [{q_means.min():.4f}, {q_means.max():.4f}]')
-    print(f'q_stds  range: [{q_stds.min():.4f}, {q_stds.max():.4f}]')
+    print('=== Step 4: Compute global log streamflow stats ===')
+    global_log_mean, global_log_std = compute_global_log_stats(
+        stats_data, dates, cfg['train_start'], cfg['train_end']
+    )
+    print(f'global_log_mean: {global_log_mean:.4f}, global_log_std: {global_log_std:.4f}')
 
     cfg['data'] = data
     cfg['dates'] = dates
     cfg['basins'] = basins
     cfg['scalar'] = scalar
-    cfg['q_means'] = q_means
-    cfg['q_stds'] = q_stds
+    cfg['global_log_mean'] = global_log_mean
+    cfg['global_log_std'] = global_log_std
 
     return cfg
 
@@ -169,8 +181,8 @@ def train(cfg):
     dates = cfg['dates']
     basins = cfg['basins']
     scalar = cfg['scalar']
-    q_means = cfg['q_means']
-    q_stds = cfg['q_stds']
+    global_log_mean = cfg['global_log_mean']
+    global_log_std = cfg['global_log_std']
                         
     print()
     print('=== Step 4: Build TRAIN dataset ===')
@@ -181,7 +193,7 @@ def train(cfg):
     val_end     = cfg['val_end']
     train_ds = CamelsNPY(
         data=data, dates=dates, basins=basins,
-        scalar=scalar, q_means=q_means, q_stds=q_stds,
+        scalar=scalar, global_log_mean=global_log_mean, global_log_std=global_log_std,
         split_start=train_start, split_end=train_end,
         seq_length=365, forecast_horizon=8,
         stride=1,
@@ -194,7 +206,7 @@ def train(cfg):
     print('=== Step 5: Build VAL dataset ===')
     val_ds = CamelsNPY(
         data=data, dates=dates, basins=basins,
-        scalar=scalar, q_means=q_means, q_stds=q_stds,
+        scalar=scalar, global_log_mean=global_log_mean, global_log_std=global_log_std,
         split_start=val_start, split_end=val_end,
         stride=1,
         seq_length=365, forecast_horizon=8,
@@ -531,20 +543,17 @@ def train_epoch(cfg, model, optimizer, scheduler, loss_fn, loader, epoch, ema):
 
     for batch in pbar:
         # -------- flexible unpack ---------------------------------------
-        # batch order: x, [attrs], y, q_means, q_stds, basin, date
+        # batch order: x, [attrs], y, norm_mean, norm_std, basin, date
         if cfg['no_static']:
-            x, y, *rest = batch
+            x, y, *_ = batch
             static_attrs = None
         else:
-            x, static_attrs, y, *rest = batch
-        # rest[0]=q_means, rest[1]=q_stds
-        q_stds = rest[1] if (len(rest) > 1 and torch.is_tensor(rest[1])) else None
+            x, static_attrs, y, *_ = batch
 
         # -------- move tensors to device --------------------------------
         to_dev = lambda t: t.to(cfg['DEVICE']) if torch.is_tensor(t) else t
         x, y = map(to_dev, (x, y))
         if static_attrs is not None: static_attrs = to_dev(static_attrs)
-        if q_stds is not None: q_stds = to_dev(q_stds)
         
         
         nldas_idx  = [0,  3,  6,  9, 12]
@@ -561,10 +570,6 @@ def train_epoch(cfg, model, optimizer, scheduler, loss_fn, loader, epoch, ema):
         if cfg['forcing_source'] != 'all':
             x = x[:, :, idx_map[which]] 
         
-        # fallback stds for NSE
-        #if (not cfg['use_mse']) and (q_stds is None):
-        #    q_stds = torch.ones_like(y, device=cfg['DEVICE'])
-
         # -------- forward pa ------------------------------------------
         optimizer.zero_grad()
 
@@ -587,8 +592,8 @@ def train_epoch(cfg, model, optimizer, scheduler, loss_fn, loader, epoch, ema):
             y_trg = y[:, -1].unsqueeze(-1)
 
         # -------- loss_fn / back-prop --------------------------------------
-        # Targets are z-scored (std≈1 per basin) so NSELoss weights should
-        # all equal 1. Pass ones so NSELoss reduces to MSE in z-score space.
+        # Targets are globally z-scored, so unit weights make NSELoss reduce
+        # to MSE in normalized space.
         loss = (loss_fn(preds, y_trg) if cfg['use_mse']
                 else loss_fn(preds, y_trg, torch.ones_like(y_trg)))
         loss.backward()
@@ -625,21 +630,16 @@ def validate_epoch(cfg, model, loader, loss_fn, epoch, ema):
     with ema.average_parameters():
         for batch in pbar:
             # -------- flexible unpack ---------------------------------------
-            # batch order: x, [attrs], y, q_means, q_stds, basin, date
+            # batch order: x, [attrs], y, norm_mean, norm_std, basin, date
             if cfg['no_static']:
-                x, y, *rest = batch
+                x, y, *_ = batch
                 static_attrs = None
             else:
-                x, static_attrs, y, *rest = batch
-            # rest[0]=q_means, rest[1]=q_stds
-            q_stds = rest[1] if (len(rest) > 1 and torch.is_tensor(rest[1])) else None
+                x, static_attrs, y, *_ = batch
 
             to_dev = lambda t: t.to(cfg['DEVICE']) if torch.is_tensor(t) else t
             x, y = map(to_dev, (x, y))
             if static_attrs is not None: static_attrs = to_dev(static_attrs)
-            if q_stds is not None: q_stds = to_dev(q_stds)
-            if (not cfg['use_mse']) and (q_stds is None):
-                q_stds = torch.ones_like(y, device=cfg['DEVICE'])
             
             nldas_idx  = [0,  3,  6,  9, 12]
             maurer_idx = [1,  4,  7, 10, 13]
@@ -673,7 +673,7 @@ def validate_epoch(cfg, model, loader, loss_fn, epoch, ema):
             else:                                       # (B,1)
                 y_trg = y[:, -1].unsqueeze(-1)
 
-            # Targets are z-scored so pass unit weights to NSELoss
+            # Targets are globally z-scored, so pass unit weights to NSELoss.
             loss = (loss_fn(preds, y_trg) if cfg['use_mse']
                     else loss_fn(preds, y_trg, torch.ones_like(y_trg)))
             B = y.size(0)
@@ -923,5 +923,3 @@ def _build_model(cfg: Dict):
             prediction_type =  cfg['predict_mode']
         ).to(cfg['DEVICE'])        
         return model
-
-

@@ -17,13 +17,14 @@ def crps_ensemble_batch(X, y, batch=4000):
     """Unbiased ensemble CRPS."""
     N, S = X.shape
     out = np.empty(N, dtype=np.float64)
+    weights = 2 * np.arange(1, S + 1, dtype=np.float64) - S - 1
     for i0 in range(0, N, batch):
         i1 = min(N, i0 + batch)
         Xi = X[i0:i1]
         yi = y[i0:i1, None]
         term1 = np.mean(np.abs(Xi - yi), axis=1)
-        diffs = np.abs(Xi[:, :, None] - Xi[:, None, :])
-        term2 = 0.5 * np.mean(diffs, axis=(1, 2))
+        Xi_sorted = np.sort(Xi, axis=1)
+        term2 = np.sum(Xi_sorted * weights, axis=1) / (S * S)
         out[i0:i1] = term1 - term2
     return out
 
@@ -52,7 +53,8 @@ def roc_auc_from_prob(p, y):
     P, N = tp[-1], fp[-1]
     if P == 0 or N == 0:
         return np.nan
-    return np.trapz(y=tp/P, x=fp/N)
+    integrate = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
+    return integrate(y=tp/P, x=fp/N)
 
 def event_reliability(p, y, bins=np.linspace(0,1,11)):
     inds = np.digitize(p, bins) - 1

@@ -11,7 +11,11 @@ from multiprocessing import get_context
 from tqdm import tqdm
 
 from papercode.datasets_npy import (
-    load_npy_data, compute_normalization, compute_per_basin_q_stats, CamelsNPY
+    load_npy_data,
+    compute_normalization,
+    compute_global_log_stats,
+    load_basin_assignment_masks,
+    CamelsNPY,
 )
 
 from papercode.lstm import Seq2SeqLSTM, EncoderDecoderDetLSTM
@@ -36,6 +40,12 @@ from papercode.decoder_only_ssm import decoder_only_ssm
 
 # --------------------------------------------------------------------
 RAW_DIR = '/projects/standard/kumarv/renga/Public/DATA/camels_us_531/RAW'
+
+# --------------------------------------------------------------------
+def _basin_assignment_csv(cfg: dict):
+    path = cfg.get('basin_assignment_csv') or cfg.get('basin_split_csv')
+    return None if path in (None, '', 'None') else path
+
 
 # --------------------------------------------------------------------
 def _build_det_model(cfg, device):
@@ -124,20 +134,24 @@ def evaluate(cfg: dict):
         basin_list_path=os.path.join(RAW_DIR, 'Basin_List.npy'),
     )
 
-    # compute normalization using all basins (consistent with training)
-    scalar = compute_normalization(data, dates)
+    basin_assignment_csv = _basin_assignment_csv(cfg)
+    stats_data = data
+
+    if basin_assignment_csv:
+        basin_masks = load_basin_assignment_masks(basin_assignment_csv, basins_all)
+        stats_data = data[basin_masks['train']]
+        data = data[basin_masks['test']]
+        basins_all = basins_all[basin_masks['test']]
+        print(f'[Spatial split] Evaluating on {len(basins_all)} test basins')
+
+    scalar = compute_normalization(
+        stats_data, dates, cfg['train_start'], cfg['train_end']
+    )
+    global_log_mean, global_log_std = compute_global_log_stats(
+        stats_data, dates, cfg['train_start'], cfg['train_end']
+    )
     print(f"Computed normalization scalar: {scalar}")
-
-    # --- spatial split: filter to test basins if basin_split_csv is provided ---
-    if cfg.get('basin_split_csv'):
-        split_df = pd.read_csv(cfg['basin_split_csv'])
-        test_ids = set(split_df[split_df['Label'] == 'test']['Basin_ID'].astype(str).str.zfill(8))
-        mask = np.array([b in test_ids for b in basins_all])
-        data = data[mask]
-        basins_all = basins_all[mask]
-        print(f'[Spatial split] Evaluating on {mask.sum()} test basins out of {len(mask)} total')
-
-    q_means, q_stds = compute_per_basin_q_stats(data, dates)
+    print(f"Global log streamflow stats: mean={global_log_mean:.4f}, std={global_log_std:.4f}")
 
     # --- build model ---
     is_diffusion = (cfg["model_name"] in ["diffusion_lstm", "diffusion_unet", "diffusion_ssm", "decoder_only_ssm", "decoder_only_lstm", "diffusion_ssm_unet", "diffusion_ssm_lstm"])
@@ -342,7 +356,7 @@ def evaluate(cfg: dict):
     # --- data loader (NPY adapter) ---
     test_ds = CamelsNPY(
         data=data, dates=dates, basins=basins_all,
-        scalar=scalar, q_means=q_means, q_stds=q_stds,
+        scalar=scalar, global_log_mean=global_log_mean, global_log_std=global_log_std,
         split_start=cfg['test_start'], split_end=cfg['test_end'],
         seq_length=cfg.get('seq_length', 365), forecast_horizon=cfg['forecast_horizon'],
         stride=cfg.get('stride', 1),
@@ -355,25 +369,21 @@ def evaluate(cfg: dict):
     # --- evaluation storage ---
     all_preds, all_tgts, all_basin_ids, all_dates, all_ens = [], [], [], [], []
 
-    # Map basins to indices for incredibly fast tensor lookup during _denorm
-    basin_to_idx = {b: i for i, b in enumerate(basins_all)}
+    global_log_mean_t = torch.tensor(global_log_mean, device=device, dtype=torch.float32)
+    global_log_std_t = torch.tensor(global_log_std, device=device, dtype=torch.float32)
 
-    def _denorm(arr, b_ids):
-        # b_ids is typically a tuple/list of strings directly from the dataloader
-        m = torch.tensor([q_means[basin_to_idx[b]] for b in b_ids], device=device, dtype=torch.float32)
-        s = torch.tensor([q_stds[basin_to_idx[b]]  for b in b_ids], device=device, dtype=torch.float32)
-
-        return arr * s + m
+    def _denorm(arr):
+        return torch.expm1(arr * global_log_std_t + global_log_mean_t)
         
     context_mgr = ema.average_parameters() if ema is not None else torch.no_grad()
     with context_mgr:
         with torch.no_grad():
             for batch in tqdm(test_loader, desc="batches"):
                 if cfg["no_static"]:
-                    x_d, y_t, q_m, q_s, basin_batch, date_batch = batch
+                    x_d, y_t, norm_m, norm_s, basin_batch, date_batch = batch
                     static_attrs = None
                 else:
-                    x_d, static_attrs, y_t, q_m, q_s, basin_batch, date_batch = batch
+                    x_d, static_attrs, y_t, norm_m, norm_s, basin_batch, date_batch = batch
                     static_attrs = static_attrs.to(device)
     
                 x_d = x_d.to(device)
@@ -381,7 +391,7 @@ def evaluate(cfg: dict):
                 fh  = cfg["forecast_horizon"]
                 B   = x_d.size(0)
     
-                def denorm(a): return _denorm(a, basin_batch)
+                def denorm(a): return _denorm(a)
          
                 nldas_idx  = [0,  3,  6,  9, 12]
                 maurer_idx = [1,  4,  7, 10, 13]
@@ -437,7 +447,7 @@ def evaluate(cfg: dict):
                     all_ens.append(None)
     
                 all_preds.append(preds.cpu().numpy())
-                # y_t is z-score normalized per basin — denormalize to real space
+                # y_t uses global log normalization; denormalize to real space.
                 y_t_denorm = denorm(y_t)
                 all_tgts .append(y_t_denorm.cpu().numpy())
 
